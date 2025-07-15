@@ -12,13 +12,14 @@
 /* eslint-disable @typescript-eslint/no-non-null-assertion */
 
 import { expect } from 'chai';
+import { DebugProtocol } from '@vscode/debugprotocol';
 import { TestUtils } from './testUtils';
 import { CudaDebugClient } from './cudaDebugClient';
 
-describe('Variable assignment tests', async () => {
-    let dc: CudaDebugClient;
-
+describe('Variable assignment tests', () => {
     const varAssignSource = 'varAssign/varAssign.cpp';
+
+    let dc: CudaDebugClient;
 
     afterEach(async () => {
         if (dc) {
@@ -36,9 +37,9 @@ describe('Variable assignment tests', async () => {
             })
         });
 
-        bpResp.body.breakpoints.forEach((bp) => {
+        for (const bp of bpResp.body.breakpoints) {
             expect(bp.verified).eq(true);
-        });
+        }
 
         await dc.configurationDoneRequest();
         const { threadId, frameId } = await TestUtils.assertStoppedLocation(dc, 'breakpoint', varAssignSource, 37);
@@ -66,10 +67,7 @@ describe('Variable assignment tests', async () => {
     });
 
     it('Variable assignment works for structs', async () => {
-        const verifyStructs = async (frameId: number, values: string[]): Promise<number[]> => {
-            const localsScopeReference = await TestUtils.getLocalsScopeReference(dc, frameId);
-            const locals = await TestUtils.getChildren(dc, localsScopeReference);
-
+        const verifyStructs = async (locals: Map<string, DebugProtocol.Variable>, values: string[]): Promise<void> => {
             const a1VarRef = locals.get('a1')!.variablesReference;
             const a1Children = await TestUtils.getChildren(dc, a1VarRef);
             expect(a1Children.get('alpha')!.value).eq(values[0]);
@@ -84,8 +82,6 @@ describe('Variable assignment tests', async () => {
             const aChildren = await TestUtils.getChildren(dc, aVarRef);
             expect(aChildren.get('alpha')!.value).eq(values[4]);
             expect(aChildren.get('beta')!.value).eq(values[5]);
-
-            return [localsScopeReference, a1VarRef, a2VarRef, aVarRef];
         };
 
         dc = await TestUtils.launchDebugger('varAssign/varAssign');
@@ -95,61 +91,87 @@ describe('Variable assignment tests', async () => {
             breakpoints: [{ line: 28 }]
         });
 
-        bpResp.body.breakpoints.forEach((bp) => {
+        for (const bp of bpResp.body.breakpoints) {
             expect(bp.verified).eq(true);
-        });
+        }
 
         await dc.configurationDoneRequest();
         const { frameId } = await TestUtils.assertStoppedLocation(dc, 'breakpoint', varAssignSource, 28);
 
-        const [localsRef0] = await verifyStructs(frameId, ['1', '1', '2', '2', '1', '1']);
-        const locals0 = await TestUtils.getChildren(dc, localsRef0);
+        let localsScopeReference = await TestUtils.getLocalsScopeReference(dc, frameId);
+        let locals = await TestUtils.getChildren(dc, localsScopeReference);
 
-        const a2Value = locals0.get('a2')!.value;
+        await verifyStructs(locals, ['1', '1', '2', '2', '1', '1']);
+
+        const a2Value = locals.get('a2')!.value;
+
+        const invalidatedPromise = dc.waitForEvent('invalidated');
         const setVarResp0 = await dc.setVariableRequest({
             name: 'a',
             value: a2Value,
-            variablesReference: localsRef0
+            variablesReference: localsScopeReference
         });
-
         expect(setVarResp0.body.value).eq(a2Value);
-        const aChildren = await TestUtils.getChildren(dc, setVarResp0.body.variablesReference!);
+        const invalidatedEvent = await invalidatedPromise;
+        expect(invalidatedEvent.body.areas).to.include('variables');
+
+        // All existing variable references are invalid after InvalidatedEvent.
+        localsScopeReference = await TestUtils.getLocalsScopeReference(dc, frameId);
+        locals = await TestUtils.getChildren(dc, localsScopeReference);
+
+        const aVarRef = locals.get('a')!.variablesReference;
+        const aChildren = await TestUtils.getChildren(dc, aVarRef);
         expect(aChildren.get('alpha')!.value).eq('2');
         expect(aChildren.get('beta')!.value).eq('2');
 
-        await dc.setVariableRequest({
+        const setVariableResponse = await dc.setVariableRequest({
             name: 'alpha',
             value: '3',
-            variablesReference: setVarResp0.body.variablesReference!
+            variablesReference: aVarRef
         });
-
-        await verifyStructs(frameId, ['1', '1', '3', '2', '3', '2']);
+        expect(setVariableResponse.body.value).eq('3');
     });
 
     const verifyAndManipulateLocals = async (frameId: number): Promise<void> => {
-        const localsRef = await TestUtils.getLocalsScopeReference(dc, frameId);
-
-        const locals = await TestUtils.getChildren(dc, localsRef);
-        const myInputChildren = await TestUtils.getChildren(dc, locals.get('myInput')!.variablesReference);
-        const takeYourPickReference = myInputChildren.get('takeYourPick')!.variablesReference;
-        const takeYourPickChildren = await TestUtils.getChildren(dc, takeYourPickReference);
+        let localsRef = await TestUtils.getLocalsScopeReference(dc, frameId);
+        let locals = await TestUtils.getChildren(dc, localsRef);
+        let myInputChildren = await TestUtils.getChildren(dc, locals.get('myInput')!.variablesReference);
+        let takeYourPickReference = myInputChildren.get('takeYourPick')!.variablesReference;
+        let takeYourPickChildren = await TestUtils.getChildren(dc, takeYourPickReference);
         const halfAndHalfChildren = await TestUtils.getChildren(dc, takeYourPickChildren.get('halfAndHalf')!.variablesReference);
-        expect(halfAndHalfChildren.get('lowHalf')?.value).eq('1');
-        expect(halfAndHalfChildren.get('highHalf')?.value).eq('3');
 
+        expect(halfAndHalfChildren.get('lowHalf')).property('value').eq('1');
+        expect(halfAndHalfChildren.get('highHalf')).property('value').eq('3');
+
+        let invalidatedPromise = dc.waitForEvent('invalidated');
         const setVarResp0 = await dc.setVariableRequest({
             name: 'myResult',
             value: '1',
             variablesReference: localsRef
         });
+        expect(setVarResp0).nested.property('body.value').eq('1');
 
-        expect(setVarResp0.body.value).eq('1');
+        let invalidatedEvent = await invalidatedPromise;
+        expect(invalidatedEvent).nested.property('body.areas').to.include('variables');
 
+        localsRef = await TestUtils.getLocalsScopeReference(dc, frameId);
+        locals = await TestUtils.getChildren(dc, localsRef);
+        myInputChildren = await TestUtils.getChildren(dc, locals.get('myInput')!.variablesReference);
+        takeYourPickReference = myInputChildren.get('takeYourPick')!.variablesReference;
+
+        // The variable needs to be expanded before its children can be assigned.
+        takeYourPickChildren = await TestUtils.getChildren(dc, takeYourPickReference);
+        expect(takeYourPickChildren.get('whole')).property('value').not.undefined.and.not.eq('17179869188');
+
+        invalidatedPromise = dc.waitForEvent('invalidated');
         await dc.setVariableRequest({
             name: 'whole',
             value: '17179869188',
             variablesReference: takeYourPickReference
         });
+
+        invalidatedEvent = await invalidatedPromise;
+        expect(invalidatedEvent).nested.property('body.areas').to.include('variables');
     };
 
     it('Variable assignment works when in device code', async () => {
@@ -160,9 +182,9 @@ describe('Variable assignment tests', async () => {
             breakpoints: [{ line: 92 }, { line: 107 }]
         });
 
-        bpResp.body.breakpoints.forEach((bp) => {
+        for (const bp of bpResp.body.breakpoints) {
             expect(bp.verified).eq(true);
-        });
+        }
 
         await dc.configurationDoneRequest();
         const { threadId, frameId } = await TestUtils.assertStoppedLocation(dc, 'breakpoint', 'variables/variables.cu', 92);

@@ -1,0 +1,13 @@
+{
+    "extends": "../tsconfig.base.json",
+    "compilerOptions": {
+        "module": "ES2022",
+        "moduleResolution": "Bundler",
+        "types": ["node", "vscode"],
+    },
+    "include": ["**/*.ts", "**/*.mts", "**/*.json"],
+    "exclude": ["test"],
+    "references": [
+        {"path": "../cdt-gdb-adapter" },
+    ]
+}

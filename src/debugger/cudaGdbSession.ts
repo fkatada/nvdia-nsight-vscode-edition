@@ -13,52 +13,39 @@
 /* eslint-disable no-param-reassign */
 
 import {
-    AttachRequestArguments,
-    CDTDisassembleArguments,
-    FrameReference,
-    FrameVariableReference,
+    type AttachRequestArguments,
+    type CDTDisassembleArguments,
     GDBBackend,
     GDBDebugSession,
-    LaunchRequestArguments,
-    MIBreakpointInfo,
-    MIDataDisassembleResponse,
-    MIStackListVariablesResponse,
-    MIVarChild,
-    MIVarCreateResponse,
-    MIVariableInfo,
-    MIVarPrintValues,
-    ObjectVariableReference,
+    type LaunchRequestArguments,
+    type MIBreakpointInfo,
+    type MIDataDisassembleResponse,
+    type MIResponse,
+    type ObjectVariableReference,
+    type RegisterVariableReference,
     sendDataDisassemble,
-    sendExecContinue,
-    sendExecFinish,
-    sendExecRun,
-    sendStackListFramesRequest,
-    sendVarAssign,
-    sendVarCreate,
-    sendVarListChildren,
-    sendVarUpdate
+    sendExecFinish
 } from 'cdt-gdb-adapter';
-import { EventEmitter } from 'events';
-import { existsSync } from 'fs';
-import { resolve, isAbsolute } from 'path';
-import { BreakpointEvent, ErrorDestination, Event, InvalidatedEvent, logger, OutputEvent, Scope, TerminatedEvent, Thread, Variable } from '@vscode/debugadapter';
+import { EventEmitter } from 'node:events';
+import path from 'node:path';
+import { BreakpointEvent, ErrorDestination, Event, ExitedEvent, InvalidatedEvent, logger, OutputEvent, TerminatedEvent, Thread, Variable } from '@vscode/debugadapter';
 import { DebugProtocol } from '@vscode/debugprotocol';
-
-import * as fs from 'fs';
-import * as util from 'util';
-import * as which from 'which';
+import * as childProcess from 'node:child_process';
+import * as fs from 'node:fs';
+import { promisify } from 'node:util';
+import which from 'which';
 import { CudaDebugProtocol } from './cudaDebugProtocol';
-import { deviceRegisterGroups } from './deviceRegisterGroups.json';
 import * as types from './types';
 import * as utils from './utils';
 
-const exec = util.promisify(require('child_process').exec);
+const exec = promisify(childProcess.exec);
 
-abstract class Adapter {
-    static readonly cudaThreadId: number = 99999;
+const CUDA_THREAD = {
+    ID: -1,
+    NAME: '(CUDA)'
+};
 
-    static readonly cudaThreadName: string = '(CUDA)';
-}
+const { deviceRegisterGroups } = await import('./deviceRegisterGroups.json');
 
 class ChangedCudaFocusEvent extends Event implements CudaDebugProtocol.ChangedCudaFocusEvent {
     body: {
@@ -88,30 +75,6 @@ class SystemInfoEvent extends Event implements CudaDebugProtocol.SystemInfoEvent
     }
 }
 
-class CudaThread extends Thread {
-    // cuda-gdb does not return a thread or thread-id for CUDA kernels, so we create a
-    // "dummy" thread for CUDA. When we see this sentinel value we will handle the requests
-    // specially for CUDA.
-
-    focus?: types.CudaFocus;
-
-    constructor() {
-        super(Adapter.cudaThreadId, Adapter.cudaThreadName);
-    }
-
-    setFocus(focus: types.CudaFocus): void {
-        this.focus = focus;
-    }
-
-    clearFocus(): void {
-        this.focus = undefined;
-    }
-
-    get hasFocus(): boolean {
-        return utils.isCudaFocusValid(this.focus);
-    }
-}
-
 export type APIErrorOption = 'stop' | 'hide' | 'ignore';
 
 type Environment = {
@@ -128,7 +91,15 @@ type NoCudaGdbResult = {
     kind: 'doesNotExist';
 };
 
+type SetupCommands = {
+    text: string;
+    description: string;
+    ignoreFailures: boolean;
+};
+
 type CudaGdbExists = CudaGdbPathResult | NoCudaGdbResult;
+
+type RequestType = 'LaunchRequest' | 'AttachRequest';
 
 export class RegisterData {
     registerGroups: RegisterGroup[];
@@ -138,9 +109,9 @@ export class RegisterData {
     }
 }
 
-export interface RegistersVariableReference extends FrameVariableReference {
-    scope: 'registers';
-    isCUDA: boolean;
+export interface CudaRegisterVariableReference extends RegisterVariableReference {
+    type: 'registers';
+    isCuda?: boolean;
     registerData?: RegisterData | undefined;
     registerGroup?: RegisterGroup | undefined;
     register?: Register | undefined;
@@ -170,9 +141,11 @@ export interface CudaLaunchOrAttachCommonRequestArguments {
     additionalSOLibSearchPath?: string;
     environment?: Environment[];
     testMode?: boolean;
+    setupCommands?: SetupCommands[];
 }
 
 export interface CudaLaunchRequestArguments extends LaunchRequestArguments, CudaLaunchOrAttachCommonRequestArguments {
+    type?: string;
     envFile?: string;
     stopAtEntry?: boolean;
 }
@@ -188,7 +161,7 @@ interface RegisterNameValuePair {
     value: string;
 }
 
-interface MICudaInfoDevicesResponse {
+interface MICudaInfoDevicesResponse extends MIResponse {
     InfoCudaDevicesTable: {
         body: Array<{
             current: string;
@@ -199,18 +172,139 @@ interface MICudaInfoDevicesResponse {
     };
 }
 
+interface MICudaFocusResponse extends MIResponse {
+    CudaFocus?: {
+        device: string;
+        sm: string;
+        warp: string;
+        lane: string;
+        kernel: string;
+        grid: string;
+        blockIdx: string;
+        threadIdx: string;
+    };
+}
+
 export class CudaGdbBackend extends GDBBackend {
     static readonly eventCudaGdbExit: string = 'cudaGdbExit';
 
-    sendCommand<T>(command: string): Promise<T> {
-        const miPrefixBreakInsert = '-break-insert';
-        if (command.startsWith(miPrefixBreakInsert)) {
-            const breakInsert = command.slice(0, miPrefixBreakInsert.length);
-            const flagF = '-f';
-            const breakPointInfo = command.slice(miPrefixBreakInsert.length);
-            command = `${breakInsert} ${flagF} ${breakPointInfo}`;
+    readonly session: CudaGdbSession;
+
+    /* The most recent sendCommand invocation, if there is one, otherwise a resolved promise.
+     * Used to synchronize between concurrent sendCommand calls.
+     */
+    private lastSendCommandPromise: Promise<any> = Promise.resolve();
+
+    #lastFocus: types.CudaFocus | undefined;
+
+    constructor(session: CudaGdbSession) {
+        super();
+        this.session = session;
+    }
+
+    async sendCommand<T>(command: string): Promise<T> {
+        /*
+         * We need to ensure that two sendCommand calls can never interleave, otherwise additional commands
+         * that we inject to change CUDA focus may end up applying to the wrong gdb command. To do so, for
+         * each command, as soon as the promise for it is created, it is stashed away in lastSendCommandPromise,
+         * and as soon as the body of that promise starts executing, it awaits on the _previous_ value of
+         * lastSendCommandPromise (i.e. on the previous sendCommand call). Thus, if additional calls happen
+         * while one is already ongoing, they will form an await chain, and all calls will always execute in
+         * sequence without interleaving.
+         */
+
+        const lastPromise = this.lastSendCommandPromise;
+        const thisPromise = (async () => {
+            try {
+                await lastPromise;
+            } catch {
+                // We don't care if the last command failed or not. We just want to wait for it to complete.
+            }
+            if (command.startsWith('-')) {
+                return await this.sendMICommand<T>(command);
+            }
+            this.#lastFocus = undefined;
+            return await super.sendCommand<T>(command);
+        })();
+
+        this.lastSendCommandPromise = thisPromise;
+        return await thisPromise;
+    }
+
+    private async sendMICommand<T>(command: string): Promise<T> {
+        /*
+         * Parse MI commands and patch them up as needed before sending them to cuda-gdb.
+         */
+
+        const tokens = [
+            ...(function* generateTokens() {
+                /* Tokens are whitespace-delimited. Each token is either an unquoted sequence of non-whitespace
+                 * characters, or a quoted sequence of arbitrary characters possibly with \" escapes inside.
+                 */
+                const tokenRe = /[\t\n\v\f\r ]*(?<token>([^\t\n\v\f\r "]+|"([^"]|\\")*?")|$)/y;
+                for (;;) {
+                    const { lastIndex } = tokenRe;
+                    const { token } = tokenRe.exec(command)?.groups ?? {};
+                    if (token === undefined) {
+                        // If our regexp failed, just yield the remaining unparsed text of the command as is.
+                        yield command.slice(lastIndex);
+                        break;
+                    } else if (token === '') {
+                        // A zero-length match is only possible at the end of input.
+                        break;
+                    } else {
+                        yield token;
+                    }
+                }
+            })()
+        ];
+
+        if (tokens[0] === '-break-insert') {
+            tokens.splice(1, 0, '-f');
         }
-        return super.sendCommand(command);
+
+        const lastFocus = this.#lastFocus;
+        this.#lastFocus = undefined;
+
+        /* If this command has --thread, it is directed at a specific thread and possibly at a specific frame.
+         * If that is a regular CPU thread, we don't need to do anything special. But if it is our dummy CUDA
+         * thread, we need to inject additional commands to set the CUDA focus and select a frame accordingly,
+         * and then patch up the original command to remove --thread and --frame so it uses the selection.
+         * This cannot be done in a single command because there is no equivalent of --thread for CUDA threads
+         * in cuda-gdb at present, and --frame cannot be used without --thread.
+         */
+        const threadPos = tokens.indexOf('--thread');
+        if (threadPos >= 0) {
+            const threadId = Number.parseInt(tokens[threadPos + 1], 10);
+            if (threadId === CUDA_THREAD.ID) {
+                tokens.splice(threadPos, 2);
+
+                const focus = this.session.cudaFocus;
+                if (focus === undefined) {
+                    throw new Error('No CUDA thread in focus.');
+                }
+
+                const framePos = tokens.indexOf('--frame');
+                let frameId: string | undefined;
+                if (framePos >= 0) {
+                    frameId = tokens[framePos + 1];
+                    tokens.splice(framePos, 2);
+                }
+
+                if (!utils.equalsCudaFocus(focus, lastFocus)) {
+                    const setFocusCommand: string = utils.formatSetFocusCommand(focus);
+                    await super.sendCommand(setFocusCommand);
+                    if (frameId !== undefined) {
+                        await super.sendCommand(`-stack-select-frame ${frameId}`);
+                    }
+                }
+
+                this.#lastFocus = focus;
+            }
+        }
+
+        command = tokens.join(' ');
+        return await super.sendCommand<T>(command);
     }
 
     async spawn(requestArgs: CudaLaunchRequestArguments | CudaAttachRequestArguments): Promise<void> {
@@ -229,6 +323,10 @@ export class CudaGdbBackend extends GDBBackend {
 
         if (requestArgs.additionalSOLibSearchPath) {
             requestArgs.initCommands?.push(`set solib-search-path ${requestArgs.additionalSOLibSearchPath}`);
+        }
+
+        if (requestArgs.miDebuggerArgs) {
+            requestArgs.gdbArguments = typeof requestArgs.miDebuggerArgs === 'string' ? [requestArgs.miDebuggerArgs] : (requestArgs.gdbArguments = requestArgs.miDebuggerArgs);
         }
     }
 }
@@ -273,283 +371,14 @@ class Register {
     }
 }
 
-export class SimplifiedVarObjType {
-    varname: string;
-
-    expression: string;
-
-    numchild: string;
-
-    value: string;
-
-    type: string;
-
-    kind: 'watch' | 'local';
-
-    constructor(varname: string, expression: string, numchild: string, value: string, type: string, kind: 'watch' | 'local') {
-        this.varname = varname;
-        this.expression = expression;
-        this.numchild = numchild;
-        this.value = value;
-        this.type = type;
-        this.kind = kind;
-    }
-}
-
-export interface VarUpdateChanges {
-    name: string;
-    value: string;
-    in_scope: string;
-    type_changed: string;
-    has_more: string;
-    new_type: string;
-    new_num_children: string;
-}
-
-export class VariableObjectStore {
-    execContext: {
-        threadId?: number | types.CudaFocus | undefined;
-
-        frameId?: number | undefined;
-
-        resumed?: boolean | undefined;
-
-        functionName?: string | undefined;
-    } = {};
-
-    protected byName = new Map<string, SimplifiedVarObjType>();
-
-    protected localsValid = false;
-
-    gdb: CudaGdbBackend | undefined;
-
-    constructor(gdb: GDBBackend) {
-        this.gdb = gdb;
-    }
-
-    async evaluate(expression: string): Promise<SimplifiedVarObjType | undefined> {
-        if (!this.gdb) {
-            // eslint-disable-next-line unicorn/no-useless-undefined
-            return undefined;
-        }
-        try {
-            const varCreateResp = await sendVarCreate(this.gdb, {
-                frame: 'floating',
-                expression
-            });
-
-            const varObj = new SimplifiedVarObjType(varCreateResp.name, expression, varCreateResp.numchild, varCreateResp.value, varCreateResp.type, 'watch');
-            this.byName.set(varObj.varname, varObj);
-
-            return varObj;
-        } catch (error) {
-            const errorMessage = (error as Error).message;
-            if (errorMessage !== '-var-create: unable to create variable object') {
-                logger.error(`Error while creating variable object for watch: ${errorMessage}`);
-            }
-
-            // eslint-disable-next-line unicorn/no-useless-undefined
-            return undefined;
-        }
-    }
-
-    async getLocals(threadId: number | types.CudaFocus | undefined, frameId: number): Promise<SimplifiedVarObjType[]> {
-        if (threadId === undefined) {
-            return [];
-        }
-
-        const funcName = await this.getCurrentFunction(threadId);
-
-        await this.validate(threadId, frameId, funcName);
-
-        return [...this.byName.values()].filter((vo) => vo.kind === 'local');
-    }
-
-    getLocalByName(localName: string): SimplifiedVarObjType | undefined {
-        return [...this.byName.values()].filter((vo) => vo.expression === localName)[0];
-    }
-
-    updateLocal(varObjName: string, update: VarUpdateChanges): SimplifiedVarObjType | undefined {
-        const varObj = this.byName.get(varObjName);
-
-        if (varObj) {
-            VariableObjectStore.updateVarObj(varObj, update);
-        }
-
-        return varObj;
-    }
-
-    protected static updateVarObj(varObj: SimplifiedVarObjType, update: VarUpdateChanges): void {
-        varObj.value = update.value;
-
-        if (update.type_changed === 'true') {
-            varObj.type = update.new_type;
-            varObj.numchild = update.new_num_children;
-        }
-    }
-
-    protected async getCurrentFunction(threadId: number | types.CudaFocus): Promise<string | undefined> {
-        const backendThreadId = VariableObjectStore.isCudaFocus(threadId) ? undefined : threadId;
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        const resp = await sendStackListFramesRequest(this.gdb!, { lowFrame: 0, highFrame: 0, threadId: backendThreadId });
-        const frameInfo = resp.stack[0];
-        return frameInfo.func;
-    }
-
-    protected async validate(threadId: number | types.CudaFocus, frameId: number, funcName: string | undefined): Promise<void> {
-        if (!this.gdb) {
-            return;
-        }
-
-        let shouldInvalidate = false;
-        if (this.threadIdChanged(threadId) || this.execContext.frameId !== frameId) {
-            shouldInvalidate = true;
-        } else {
-            if (this.execContext.resumed === false) {
-                await this.updateLocals();
-                return;
-            }
-
-            if (!funcName || !this.execContext.functionName || funcName !== this.execContext.functionName) {
-                shouldInvalidate = true;
-            }
-        }
-
-        let getStackVarsCommand = '-stack-list-variables';
-
-        if (!VariableObjectStore.isCudaFocus(threadId)) {
-            // Here, we need to add the thread and frame IDs but a bug in cuda-gdb currently prevents this.
-            getStackVarsCommand += ` --thread ${threadId} --frame ${frameId}`;
-        }
-        getStackVarsCommand += ' --simple-values';
-
-        const stackLocalsResp: MIStackListVariablesResponse = await this.gdb.sendCommand(getStackVarsCommand);
-        const stackLocalsList = stackLocalsResp.variables;
-
-        if (!shouldInvalidate) {
-            const oldLocals = new Map<string, SimplifiedVarObjType>();
-            this.byName.forEach((vo) => {
-                if (vo.kind === 'local') {
-                    const stackLocalName = vo.expression;
-                    oldLocals.set(stackLocalName, vo);
-                }
-            });
-
-            if (oldLocals.size !== stackLocalsList.length) {
-                shouldInvalidate = true;
-            } else {
-                shouldInvalidate = !stackLocalsList.every((sl) => {
-                    const vo = oldLocals.get(sl.name);
-                    return vo && vo.type === sl.type;
-                });
-            }
-        }
-
-        if (!shouldInvalidate) {
-            await this.updateLocals();
-        } else {
-            await this.clear('local');
-
-            await this.createLocals(stackLocalsList);
-
-            this.execContext = {
-                threadId,
-                frameId,
-                functionName: funcName,
-                resumed: false
-            };
-        }
-    }
-
-    static isCudaFocus(threadId: number | types.CudaFocus): threadId is types.CudaFocus {
-        // Note that we are not calling type but rather
-        // checking if the member exists on threadId i.e.
-        // whether threadId is a CudaFocus object:
-        return (threadId as types.CudaFocus).type !== undefined;
-    }
-
-    protected threadIdChanged(threadId: number | types.CudaFocus): boolean {
-        if (this.execContext.threadId === undefined) {
-            return true;
-        }
-
-        if (!VariableObjectStore.isCudaFocus(threadId)) {
-            // We are in host code now. Return true iff:
-            //  -- this.execContext.threadId is a CudaFocus (i.e. we
-            //     were in device code before),
-            //  or
-            //  -- this.execContext.threadId is a host threadId but
-            //     does not match the new threadId.
-            return threadId !== this.execContext.threadId;
-        }
-
-        if (!VariableObjectStore.isCudaFocus(this.execContext.threadId)) {
-            // We were in host code and now we're in device code.
-            return true;
-        }
-
-        return utils.equalsCudaFocus(threadId, this.execContext.threadId);
-    }
-
-    protected async createLocals(stackLocalsList: MIVariableInfo[]): Promise<void> {
-        if (!this.gdb) {
-            return;
-        }
-
-        // eslint-disable-next-line unicorn/no-for-loop
-        for (let i = 0; i < stackLocalsList.length; i += 1) {
-            const stackLocal = stackLocalsList[i];
-
-            // eslint-disable-next-line no-await-in-loop
-            const varCreateResp: MIVarCreateResponse = await sendVarCreate(this.gdb, {
-                frame: 'floating',
-                expression: stackLocal.name
-            });
-
-            const stackVarObj = new SimplifiedVarObjType(varCreateResp.name, stackLocal.name, varCreateResp.numchild, varCreateResp.value, varCreateResp.type, 'local');
-            this.byName.set(stackVarObj.varname, stackVarObj);
-        }
-    }
-
-    async update(): Promise<VarUpdateChanges[]> {
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        const varUpdateResp = await sendVarUpdate(this.gdb!, { name: '*' });
-        const changes = varUpdateResp.changelist.map((ch) => ch as VarUpdateChanges);
-
-        changes.forEach((ch) => {
-            const varObj = this.byName.get(ch.name);
-
-            if (!varObj || varObj.kind !== 'local') {
-                return;
-            }
-
-            VariableObjectStore.updateVarObj(varObj, ch);
-        });
-
-        return changes;
-    }
-
-    // This method is purely an optimization for the common
-    // case where we are doing step/next.
-    protected async updateLocals(): Promise<void> {
-        await this.update();
-    }
-
-    public clearWatches(): Promise<void> {
-        return this.clear('watch');
-    }
-
-    protected async clear(kind: 'watch' | 'local'): Promise<void> {
-        const stackVarObjects = [...this.byName.values()].filter((vo) => vo.kind === kind);
-        await this.gdb?.sendCommands(stackVarObjects.map((vo) => `-var-delete ${vo.varname}`));
-        stackVarObjects.forEach((vo) => this.byName.delete(vo.varname));
-    }
-}
-
 export class CudaGdbSession extends GDBDebugSession {
     static readonly codeModuleNotFound: number = 127;
 
-    private readonly cudaThread: CudaThread = new CudaThread();
+    /* cuda-gdb does not treat GPU threads as first-class objects like CPU threads; but in DAP,
+     * all frame object must belong to some DAP thread object. Thus we maintain a single dummy
+     * DAP thread that corresponds to the GPU thread currently in focus.
+     */
+    private readonly cudaThread: Thread = new Thread(CUDA_THREAD.ID, CUDA_THREAD.NAME);
 
     protected clientInitArgs: DebugProtocol.InitializeRequestArguments | undefined;
 
@@ -559,12 +388,25 @@ export class CudaGdbSession extends GDBDebugSession {
 
     protected telemetryInfoSent = false;
 
-    protected getCurrentFocus(): types.CudaFocus | undefined {
-        return this.cudaThread.focus;
+    private _cudaFocus: types.CudaFocus | undefined;
+
+    public get cudaFocus(): types.CudaFocus | undefined {
+        return this._cudaFocus;
+    }
+
+    private set cudaFocus(newFocus) {
+        if (!utils.equalsCudaFocus(newFocus, this._cudaFocus)) {
+            this._cudaFocus = newFocus;
+            this.sendEvent(new ChangedCudaFocusEvent(newFocus));
+        }
+    }
+
+    private hasValidFocus(): boolean {
+        return utils.isCudaFocusValid(this.cudaFocus);
     }
 
     protected createBackend(): GDBBackend {
-        const backend: CudaGdbBackend = new CudaGdbBackend();
+        const backend: CudaGdbBackend = new CudaGdbBackend(this);
         const emitter: EventEmitter = backend as EventEmitter;
 
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -577,8 +419,6 @@ export class CudaGdbSession extends GDBDebugSession {
 
         return backend;
     }
-
-    protected varStore = new VariableObjectStore(this.gdb);
 
     public start(inStream: NodeJS.ReadableStream, outStream: NodeJS.WritableStream): void {
         // Defined for debugging
@@ -611,100 +451,49 @@ export class CudaGdbSession extends GDBDebugSession {
     }
 
     protected dispatchRequest(request: DebugProtocol.Request): void {
-        const anyRequest = request as any;
-        if (anyRequest?.arguments?.threadId === this.cudaThread.id) {
-            // The CUDA thread id is not real, it's a sentinel value to identify requests
-            // that are intended for CUDA. We catch this here and remove it, otherwise cuda-gdb
-            // MI commands that include a thread id are assumed to be CPU threads and will
-            // change focus.
-
-            delete anyRequest.arguments.threadId;
-        }
-
         super.dispatchRequest(request);
     }
 
     protected customRequest(command: string, response: DebugProtocol.Response, args: any): void {
         switch (command) {
-            case CudaDebugProtocol.Request.changeCudaFocus:
+            case CudaDebugProtocol.Request.changeCudaFocus: {
                 this.changeCudaFocusRequest(response as CudaDebugProtocol.ChangeCudaFocusResponse, args);
                 break;
-
-            default:
+            }
+            default: {
                 super.customRequest(command, response, args);
                 break;
+            }
         }
     }
 
     protected async launchRequest(response: DebugProtocol.LaunchResponse, args: CudaLaunchRequestArguments): Promise<void> {
         logger.verbose('Executing launch request');
 
-        let logFilePath = args.logFile;
-        if (logFilePath && !isAbsolute(logFilePath)) {
-            logFilePath = resolve(logFilePath);
-        }
+        this.initializeLogger(args);
 
-        // Logger setup is handled in the base class
-        logger.init((outputEvent: OutputEvent) => this.sendEvent(outputEvent), logFilePath, true);
-        logger.verbose('Logger successfully initialized');
-
-        if (process.platform !== 'linux') {
-            response.success = false;
-            response.message = 'Unable to launch cuda-gdb on non-Linux system';
-            logger.verbose(response.message);
-            this.sendErrorResponse(response, 1, response.message);
-            await super.launchRequest(response, args);
-
+        let ok = await this.validateLinuxPlatform(response);
+        if (!ok) {
+            // Error response sent within validateLinuxPlatform
             return;
         }
-        logger.verbose('Confirmed that we are on a Linux system');
 
         const cdtLaunchArgs: LaunchRequestArguments = { ...args };
 
-        cdtLaunchArgs.gdb = args.miDebuggerPath || args.debuggerPath;
+        // Remove the cast - type is now part of CudaLaunchRequestArguments
+        const isQNX = args.type === 'cuda-qnx-gdbserver';
 
-        try {
-            CudaGdbSession.configureLaunch(args, cdtLaunchArgs);
-        } catch (error) {
-            response.success = false;
-            response.message = (error as Error).message;
-            logger.verbose(`Failed in configureLaunch() with error "${response.message}"`);
-            this.sendErrorResponse(response, 1, response.message);
-            await super.launchRequest(response, args);
-
+        ok = await this.runConfigureLaunch(response, args, cdtLaunchArgs, 'LaunchRequest');
+        if (!ok) {
+            // Error response sent within runConfigureLaunch
             return;
         }
 
-        let debuggerCmdLineArgs: string[] = [];
-
-        if (args.args) {
-            debuggerCmdLineArgs = debuggerCmdLineArgs.concat(args.args);
-        }
-
-        if (args.miDebuggerArgs) {
-            debuggerCmdLineArgs = debuggerCmdLineArgs.concat(args.miDebuggerArgs);
-        }
-
-        if (debuggerCmdLineArgs.length > 0) {
-            cdtLaunchArgs.arguments = debuggerCmdLineArgs.join(';');
-        }
-
-        const cudaGdbPath = await checkCudaGdb(cdtLaunchArgs.gdb);
-
-        if (cudaGdbPath.kind === 'doesNotExist') {
-            response.success = false;
-            response.message = `Unable to find cuda-gdb in ${cdtLaunchArgs.gdb}`;
-            logger.verbose(`Failed with error ${response.message}`);
-            this.sendErrorResponse(response, 1, response.message);
-
+        // This also sets the path if found
+        ok = await this.validateAndSetCudaGdbPath(response, cdtLaunchArgs, isQNX);
+        if (!ok) {
+            // Error response sent within validateAndSetCudaGdbPath
             return;
-        }
-
-        logger.verbose('cuda-gdb found and accessible');
-        cdtLaunchArgs.gdb = cudaGdbPath.path;
-
-        if ('stopAtEntry' in args && args.stopAtEntry) {
-            this.stopAtEntry = true;
         }
 
         this.testMode = args.testMode ?? false;
@@ -727,7 +516,18 @@ export class CudaGdbSession extends GDBDebugSession {
             }
 
             const commandProgram = `readlink -e /proc/${args.processId}/exe`;
-            const { error, stdout, stderr } = await exec(commandProgram.toString());
+            let stdout: string, stderr: string;
+            try {
+                ({ stdout, stderr } = await exec(commandProgram.toString()));
+            } catch (error) {
+                response.success = false;
+                response.message = `Unable to attach to ${processExecName}: ${error}`;
+                logger.verbose(`Failed in string PID setup with error ${response.message}`);
+                this.sendErrorResponse(response, 1, response.message);
+
+                return;
+            }
+
             const programPath = `${stdout}`.trim();
 
             // if the process id is invalid then the command would return null so accounting for that case
@@ -736,20 +536,17 @@ export class CudaGdbSession extends GDBDebugSession {
                 response.message = `Unable to attach to ${processExecName}`;
                 logger.verbose(`Failed in string PID setup with error ${response.message}`);
                 this.sendErrorResponse(response, 1, response.message);
-            }
 
-            if (error) {
-                response.success = false;
-                response.message = `Unable to attach to  ${processExecName}, ${error}`;
-                logger.verbose(`Failed in string PID setup with error ${response.message}`);
-                this.sendErrorResponse(response, 1, response.message);
+                return;
             }
 
             if (stderr) {
                 response.success = false;
-                response.message = `Unable to attach to  ${processExecName} ,${stderr}`;
-                logger.verbose(`Failed in string PID setup with error  ${response.message}`);
+                response.message = `Unable to attach to  ${processExecName}, ${stderr}`;
+                logger.verbose(`Failed in string PID setup with error ${response.message}`);
                 this.sendErrorResponse(response, 1, response.message);
+
+                return;
             }
 
             args.program = programPath;
@@ -760,7 +557,18 @@ export class CudaGdbSession extends GDBDebugSession {
             // rare case that the process picker is not used and the user manually enters the pid
 
             const commandProgram = `readlink -e /proc/${args.processId}/exe`;
-            const { error, stdout, stderr } = await exec(commandProgram.toString());
+            let stdout: string, stderr: string;
+            try {
+                ({ stdout, stderr } = await exec(commandProgram.toString()));
+            } catch (error) {
+                response.success = false;
+                response.message = `Unable to attach to process with pid ${args.processId}, ${error}`;
+                logger.verbose(`Failed in number PID setup with error  ${response.message}`);
+                this.sendErrorResponse(response, 1, response.message);
+
+                return;
+            }
+
             const programPath = `${stdout}`.trim();
 
             // if the process id is invalid then the command would return null so accounting for that case
@@ -769,13 +577,8 @@ export class CudaGdbSession extends GDBDebugSession {
                 response.message = `Unable to attach to process with pid ${args.processId}`;
                 logger.verbose(`Failed in number PID setup with error  ${response.message}`);
                 this.sendErrorResponse(response, 1, response.message);
-            }
 
-            if (error) {
-                response.success = false;
-                response.message = `Unable to attach to process with pid ${args.processId}, ${error}`;
-                logger.verbose(`Failed in number PID setup with error  ${response.message}`);
-                this.sendErrorResponse(response, 1, response.message);
+                return;
             }
 
             if (stderr) {
@@ -783,6 +586,8 @@ export class CudaGdbSession extends GDBDebugSession {
                 response.message = `Unable to attach to process with pid ${args.processId}, ${stderr}`;
                 logger.verbose(`Failed in number PID setup with error  ${response.message}`);
                 this.sendErrorResponse(response, 1, response.message);
+
+                return;
             }
 
             args.processId = `${args.processId}`;
@@ -791,25 +596,13 @@ export class CudaGdbSession extends GDBDebugSession {
             logger.verbose('processed process ID as number');
         }
 
-        let logFilePath = args.logFile;
-        if (logFilePath && !isAbsolute(logFilePath)) {
-            logFilePath = resolve(logFilePath);
-        }
+        this.initializeLogger(args);
 
-        // Logger setup is handled in the base class
-        logger.init((outputEvent: OutputEvent) => this.sendEvent(outputEvent), logFilePath, true);
-        logger.verbose('Logger successfully initialized');
-
-        if (process.platform !== 'linux') {
-            response.success = false;
-            response.message = 'Unable to launch cuda-gdb on non-Linux system';
-            logger.verbose(response.message);
-            this.sendErrorResponse(response, 1, response.message);
-            await super.attachRequest(response, args);
-
+        let ok = await this.validateLinuxPlatform(response);
+        if (!ok) {
+            // Error response sent within validateLinuxPlatform
             return;
         }
-        logger.verbose('Confirmed that we are on a Linux system');
 
         // 0 is requires for cuda-gdb to attach to non-children
         const ptraceScopeFile = '/proc/sys/kernel/yama/ptrace_scope';
@@ -823,6 +616,8 @@ export class CudaGdbSession extends GDBDebugSession {
                 response.message = 'Please try running echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope ';
                 logger.verbose(response.message);
                 this.sendErrorResponse(response, 1, response.message);
+
+                return;
             }
         }
 
@@ -838,87 +633,26 @@ export class CudaGdbSession extends GDBDebugSession {
 
         const cdtAttachArgs: AttachRequestArguments = { ...args };
 
-        cdtAttachArgs.gdb = args.miDebuggerPath || args.debuggerPath;
+        const isQNX = args.debuggerPath?.endsWith('cuda-qnx-gdb') ?? false;
 
-        try {
-            CudaGdbSession.configureLaunch(args, cdtAttachArgs);
-        } catch (error) {
-            response.success = false;
-            response.message = (error as Error).message;
-            logger.verbose(`Failed in configureLaunch() with error ${response.message}`);
-            this.sendErrorResponse(response, 1, response.message);
-            await super.launchRequest(response, args);
-
+        ok = await this.runConfigureLaunch(response, args, cdtAttachArgs, 'AttachRequest');
+        if (!ok) {
+            // Error response sent within runConfigureLaunch
             return;
         }
 
-        const cudaGdbPath = await checkCudaGdb(cdtAttachArgs.gdb);
-        logger.verbose('cuda-gdb found and accessible');
-
-        if (cudaGdbPath.kind === 'doesNotExist') {
-            response.success = false;
-            response.message = `Unable to find cuda-gdb in ${cdtAttachArgs.gdb}`;
-            logger.verbose(`Failed with error ${response.message}`);
-            this.sendErrorResponse(response, 1, response.message);
-        } else {
-            cdtAttachArgs.gdb = cudaGdbPath.path;
+        // Rename call site
+        ok = await this.validateAndSetCudaGdbPath(response, cdtAttachArgs, isQNX);
+        if (!ok) {
+            // Error response sent within validateAndSetCudaGdbPath
+            return;
         }
 
         logger.verbose('Attach request completed');
         await super.attachRequest(response, cdtAttachArgs);
     }
 
-    protected static getLaunchEnvVars(pathToEnvFile: string): LaunchEnvVarSpec[] {
-        if (!isAbsolute(pathToEnvFile)) {
-            pathToEnvFile = resolve(pathToEnvFile);
-        }
-
-        let envFileContents = '';
-        try {
-            envFileContents = fs.readFileSync(pathToEnvFile, { encoding: 'utf8', flag: 'r' });
-        } catch (error) {
-            throw new Error(`Unable to read launch environment variables file:\n${(error as Error).message}`);
-        }
-
-        const unsetString = 'unset';
-
-        const envVarSpecs: LaunchEnvVarSpec[] = [];
-        const envFileLines = envFileContents.split(/\r?\n/);
-        envFileLines.forEach((line) => {
-            line = line.trim();
-            if (line.length === 0 || line.startsWith('#')) {
-                return;
-            }
-
-            const eqIdx = line.indexOf('=');
-            if (eqIdx >= 0) {
-                const name = line.slice(0, eqIdx).trim();
-                if (name.length > 0) {
-                    const value = line.slice(eqIdx + 1).trim();
-                    envVarSpecs.push({ type: 'set', name, value });
-                    return;
-                }
-            } else if (line.startsWith(unsetString) && line.length > unsetString.length) {
-                if (line.slice(unsetString.length, unsetString.length + 1).trim().length === 0) {
-                    const name = line.slice(unsetString.length + 1).trim();
-                    if (name.length > 0) {
-                        envVarSpecs.push({ type: 'unset', name });
-                        return;
-                    }
-                }
-            }
-
-            logger.warn(`Invalid environment variable specification: ${line}`);
-        });
-
-        return envVarSpecs;
-    }
-
-    protected static configureLaunch(args: CudaAttachRequestArguments | CudaLaunchRequestArguments, cdtArgs: AttachRequestArguments | LaunchRequestArguments): void {
-        if (args.verboseLogging !== undefined) {
-            cdtArgs.verbose = args.verboseLogging;
-        }
-
+    protected async configureLaunch(args: CudaAttachRequestArguments | CudaLaunchRequestArguments, cdtArgs: AttachRequestArguments | LaunchRequestArguments, requestType: RequestType): Promise<void> {
         if (args.verboseLogging !== undefined) {
             cdtArgs.verbose = args.verboseLogging;
         }
@@ -927,12 +661,7 @@ export class CudaGdbSession extends GDBDebugSession {
             cdtArgs.initCommands = [];
         }
 
-        if ('envFile' in args && args.envFile) {
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            const envVarSpecs = this.getLaunchEnvVars(args.envFile);
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            cdtArgs.initCommands!.unshift(...envVarSpecs.map((spec) => (spec.type === 'set' ? `set env ${spec.name}=${spec.value!}` : `unset env ${spec.name}`)));
-        }
+        await this.configureSetupCommands(args, cdtArgs);
 
         if ('cwd' in args && args.cwd) {
             cdtArgs.initCommands.push(`set cwd ${args.cwd}`);
@@ -949,77 +678,71 @@ export class CudaGdbSession extends GDBDebugSession {
         if (args.environment) {
             setEnvVars(args.environment);
         }
+
+        configureEnvfile(args, cdtArgs);
+
+        if (args.args && requestType === 'LaunchRequest') {
+            (cdtArgs as CudaLaunchRequestArguments).arguments = parseArgs(args.args);
+        }
+
+        cdtArgs.gdb = args.miDebuggerPath || args.debuggerPath;
+
+        if ('stopAtEntry' in args && args.stopAtEntry) {
+            this.stopAtEntry = true;
+        }
     }
 
-    // This method has been borrowed from cdt-gdb-adapter's GDBDebugSession.ts (with modifications).
-    protected async configurationDoneRequest(
-        response: DebugProtocol.ConfigurationDoneResponse,
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        args: DebugProtocol.ConfigurationDoneArguments
-    ): Promise<void> {
-        try {
-            if (this.isAttach) {
-                await sendExecContinue(this.gdb);
-            } else if (this.stopAtEntry) {
+    protected async configurationDoneRequest(response: DebugProtocol.ConfigurationDoneResponse, args: DebugProtocol.ConfigurationDoneArguments): Promise<void> {
+        if (this.stopAtEntry) {
+            try {
                 await this.gdb.sendCommand('start');
-            } else {
-                await sendExecRun(this.gdb);
+                this.sendResponse(response);
+            } catch (error) {
+                this.sendErrorResponse(response, 100, (error as Error).message);
             }
-            this.sendResponse(response);
-        } catch (error) {
-            this.sendErrorResponse(response, 100, (error as Error).message);
+        } else {
+            super.configurationDoneRequest(response, args);
         }
     }
 
     protected async handleGDBAsync(resultClass: string, resultData: any): Promise<void> {
+        let cudaFocusRecord: any = undefined;
         if (resultClass === 'stopped') {
-            // If the event originated from CUDA there is a CudaFocus field with:
-            //
-            //     blockIdx:'(0,0,0)'
-            //     device:'0'
-            //     grid:'1'
-            //     kernel:'0'
-            //     lane:'0'
-            //     sm:'0'
-            //     threadIdx:'(0,0,0)'
-            //     warp:'0'
-            //
-            // In this case we add our sentinel thread id to identify CUDA and save
-            // off the focus sm, warp, and lane so we can switch back to the same
-            // location if focus is switched to a CPU thread.
-
-            if (resultData.CudaFocus) {
+            /*
+             * If the event occurred on a GPU thread, MI record will have CudaFocus field with fields like:
+             *
+             *     blockIdx:'(0,0,0)'
+             *     device:'0'
+             *     grid:'1'
+             *     kernel:'0'
+             *     lane:'0'
+             *     sm:'0'
+             *     threadIdx:'(0,0,0)'
+             *     warp:'0'
+             *
+             * thread-id field is also present in the record, but does not correspond to anything meaningful
+             * because GPU threads do not have IDs in cuda-gdb.
+             */
+            cudaFocusRecord = resultData.CudaFocus;
+            if (cudaFocusRecord !== undefined) {
+                /* Make it look like it came from our dummy CUDA DAP thread before delegating event processing
+                 * to GDBDebugSession.
+                 */
                 resultData['thread-id'] = this.cudaThread.id.toString();
 
-                // Currently only using software coordinates, use code below if hardware coordinates are needed.
-                //
-                // const sm: number | undefined = Number.parseInt(resultData.CudaFocus.sm);
-                // const warp: number | undefined = Number.parseInt(resultData.CudaFocus.warp);
-                // const lane: number | undefined = Number.parseInt(resultData.CudaFocus.lane);
-                // const focus: types.CudaFocus = { type: 'hardware', sm, warp, lane };
-
-                const blockIdx: types.CudaDim | undefined = utils.parseCudaDim(resultData.CudaFocus.blockIdx);
-                const threadIdx: types.CudaDim | undefined = utils.parseCudaDim(resultData.CudaFocus.threadIdx);
-                const focus: types.CudaFocus = { type: 'software', blockIdx, threadIdx };
-
-                if (!utils.equalsCudaFocus(focus, this.cudaThread.focus)) {
-                    this.cudaThread.setFocus(focus);
-                    this.resetCudaFocus();
-
-                    this.sendEvent(new ChangedCudaFocusEvent(this.cudaThread.focus));
-                }
-            } else if (this.cudaThread.hasFocus) {
-                this.cudaThread.clearFocus();
-
-                this.sendEvent(new ChangedCudaFocusEvent());
+                this.cudaFocus = {
+                    type: 'software',
+                    blockIdx: utils.parseCudaDim(resultData.CudaFocus.blockIdx),
+                    threadIdx: utils.parseCudaDim(resultData.CudaFocus.threadIdx)
+                };
+            } else {
+                this.cudaFocus = undefined;
             }
-
-            this.varStore.execContext.resumed = true;
         }
 
         super.handleGDBAsync(resultClass, resultData);
 
-        if (this.cudaThread.hasFocus && !this.telemetryInfoSent) {
+        if (cudaFocusRecord !== undefined && !this.telemetryInfoSent) {
             this.telemetryInfoSent = true;
             const systemInfo = await getSystemInfo(this.gdb);
             this.sendEvent(new SystemInfoEvent(systemInfo));
@@ -1027,12 +750,23 @@ export class CudaGdbSession extends GDBDebugSession {
     }
 
     protected handleGDBNotify(notifyClass: string, notifyData: any): void {
-        if (notifyClass === 'breakpoint-modified') {
-            const miBreakpoint: MIBreakpointInfo = notifyData.bkpt as MIBreakpointInfo;
-            this.updateBreakpointLocation(miBreakpoint);
-        } else {
-            super.handleGDBNotify(notifyClass, notifyData);
+        switch (notifyClass) {
+            case 'breakpoint-modified': {
+                const miBreakpoint: MIBreakpointInfo = notifyData.bkpt as MIBreakpointInfo;
+                this.updateBreakpointLocation(miBreakpoint);
+                return;
+            }
+            case 'thread-group-exited': {
+                const exitCode = notifyData['exit-code'];
+                if (exitCode !== undefined) {
+                    this.sendEvent(new ExitedEvent(exitCode));
+                }
+                break;
+            }
+            default:
         }
+
+        super.handleGDBNotify(notifyClass, notifyData);
     }
 
     protected initializeRequest(response: DebugProtocol.InitializeResponse, args: DebugProtocol.InitializeRequestArguments): void {
@@ -1075,22 +809,15 @@ export class CudaGdbSession extends GDBDebugSession {
         }
     }
 
-    protected preResume(): Promise<void> {
-        return this.varStore.clearWatches();
-    }
-
     protected async nextRequest(response: DebugProtocol.NextResponse, args: DebugProtocol.NextArguments): Promise<void> {
-        await this.preResume();
         await super.nextRequest(response, args);
     }
 
     protected async stepInRequest(response: DebugProtocol.StepInResponse, args: DebugProtocol.StepInArguments): Promise<void> {
-        await this.preResume();
         await super.stepInRequest(response, args);
     }
 
     protected async stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): Promise<void> {
-        await this.preResume();
         try {
             await sendExecFinish(this.gdb, args.threadId);
             this.sendResponse(response);
@@ -1104,376 +831,116 @@ export class CudaGdbSession extends GDBDebugSession {
     }
 
     protected async continueRequest(response: DebugProtocol.ContinueResponse, args: DebugProtocol.ContinueArguments): Promise<void> {
-        await this.preResume();
         await super.continueRequest(response, args);
     }
 
-    protected async trackFocus(func: () => Promise<void>): Promise<void> {
-        const focus: types.CudaFocus | undefined = this.getCurrentFocus();
-        try {
-            await func();
-        } finally {
-            const newFocus: types.CudaFocus | undefined = this.getCurrentFocus();
-            if (!utils.equalsCudaFocus(focus, newFocus)) {
-                this.sendEvent(new ChangedCudaFocusEvent());
-            }
-        }
-    }
-
     protected async evaluateRequest(response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments): Promise<void> {
-        const execFlag = '-exec';
-        const backtickFlag = '`';
-        const miFlag = '-mi';
-
-        let consoleCommand = '';
-
-        const expression = args.expression.trimLeft();
-
-        if (expression) {
-            if (expression.startsWith(execFlag)) {
-                consoleCommand = expression.slice(execFlag.length).trimLeft();
-            } else if (expression.startsWith(backtickFlag)) {
-                consoleCommand = expression.slice(backtickFlag.length).trimLeft();
-            } else if (expression.startsWith(miFlag)) {
-                consoleCommand = expression.slice(miFlag.length).trimLeft();
-                const miResponse: string = JSON.stringify(await this.gdb.sendCommand(consoleCommand));
-                this.sendEvent(new OutputEvent(miResponse));
+        /*
+         * In contexts other than Debug Console (i.e. watch or hover), running arbitrary gdb commands
+         * on "evaluate" requests is useless and potentially dangerous since timing of such requests
+         * is unpredictable.
+         */
+        if (args.context === 'repl') {
+            const { mi, command } = /^\s*(`|-exec|(?<mi>-mi))\s*(?<command>.*)/.exec(args.expression)?.groups ?? {};
+            if (command !== undefined) {
+                const result = await this.gdb.sendCommand(command);
+                if (mi !== undefined) {
+                    this.sendEvent(new OutputEvent(JSON.stringify(result)));
+                }
                 this.sendResponse(response);
+
+                // This command may have changed CUDA focus; if so, we can find out by using -cuda-focus-query.
+                const setFocusResponse = (await this.gdb.sendCommand('-cuda-focus-query block thread')) as MICudaFocusResponse;
+                const queriedFocus = setFocusResponse.CudaFocus;
+                if (queriedFocus !== undefined) {
+                    const blockIdx = queriedFocus.blockIdx;
+                    const threadIdx = queriedFocus.threadIdx;
+                    if (blockIdx !== undefined && threadIdx !== undefined) {
+                        const newFocus: types.CudaFocus = {
+                            type: 'software',
+                            blockIdx: utils.parseCudaDim(blockIdx),
+                            threadIdx: utils.parseCudaDim(threadIdx)
+                        };
+                        if (utils.isCudaFocusValid(newFocus)) {
+                            this.cudaFocus = newFocus;
+                        }
+                    }
+                }
+
                 return;
             }
         }
-        if (consoleCommand) {
-            await this.trackFocus(async () => {
-                await this.gdb.sendCommand(consoleCommand);
-                this.sendResponse(response);
-                this.invalidateState();
-            });
-        } else {
-            if (args.frameId === undefined) {
-                this.sendErrorResponse(response, 1, 'Missing frame number');
-                return;
-            }
 
-            const frame = this.frameHandles.get(args.frameId);
+        await super.evaluateRequest(response, args);
+    }
 
-            if (!frame) {
-                this.sendResponse(response);
-                return;
-            }
-
-            const varObj = await this.varStore.evaluate(args.expression);
-
-            let variablesReference = 0;
-
-            if (varObj && Number.parseInt(varObj.numchild) > 0) {
-                const varObjReference: ContainerObjectReference = {
-                    type: 'object',
-                    frameHandle: args.frameId,
-                    varobjName: varObj.varname
-                };
-
-                variablesReference = this.variableHandles.create(varObjReference);
-            }
-
-            const result = varObj?.value || '<Not available>';
-
-            response.body = {
-                result,
-                variablesReference
-            };
-
-            if (varObj && this.clientInitArgs?.supportsVariableType === true) {
-                response.body.type = varObj.type;
-            }
-
+    /* There are some DAP requests such as StackTraceRequest that are only valid when debuggee is
+     * stopped. Clients are not supposed to issue them for running threads, but due to inherent
+     * asynchrony of DAP, VSCode sometimes does so anyway. GDBDebugSession makes the necessary
+     * checks and responds with an error response in that case, but VSCode then displays those
+     * error messages to the user, which is undesirable. So, for those requests, we instead return
+     * an empty but successful response (which is discarded by VSCode). This decorator handles it
+     * in a generic manner.
+     */
+    protected async scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): Promise<void> {
+        if (this.isRunning) {
+            response.body = { scopes: [] };
             this.sendResponse(response);
-        }
-    }
-
-    protected scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments): void {
-        const localReference: FrameVariableReference = {
-            type: 'frame',
-            frameHandle: args.frameId
-        };
-
-        const registerReference: RegistersVariableReference = {
-            type: 'frame',
-            scope: 'registers',
-            isCUDA: this.frameHandles.get(args.frameId).threadId === undefined,
-            frameHandle: args.frameId
-        };
-
-        const localScope = new Scope('Local', this.variableHandles.create(localReference), false);
-        const registerScope: DebugProtocol.Scope = new Scope('Registers', this.variableHandles.create(registerReference), false);
-        registerScope.presentationHint = 'registers';
-
-        response.body = {
-            scopes: [localScope, registerScope]
-        };
-
-        this.sendResponse(response);
-    }
-
-    protected async stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): Promise<void> {
-        await super.stackTraceRequest(response, args);
-
-        if (this.cudaThread.hasFocus && args.threadId !== undefined) {
-            await this.resetCudaFocus();
-        }
-    }
-
-    // This function has been borrowed from CDT's implementation with a slight
-    // modification to check for child.value being nullish (null or undefined.)
-    // eslint-disable-next-line class-methods-use-this
-    protected isChildOfClass(child: MIVarChild): boolean {
-        return child.type === undefined && (!child.value || child.value === '') && (child.exp === 'public' || child.exp === 'protected' || child.exp === 'private');
-    }
-
-    protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
-        const variables = new Array<DebugProtocol.Variable>();
-
-        response.body = {
-            variables
-        };
-
-        try {
-            const frameOrObjectRef = this.variableHandles.get(args.variablesReference);
-
-            if (!frameOrObjectRef) {
-                this.sendResponse(response);
-                return;
-            }
-
-            if (frameOrObjectRef.type === 'frame') {
-                const ref = frameOrObjectRef as RegistersVariableReference;
-
-                if (ref?.scope === 'registers') {
-                    await this.registersRequest(response, args, ref);
-                } else {
-                    await this.localsRequest(response, args, frameOrObjectRef);
-                }
-
-                const frame: FrameReference = this.frameHandles.get(ref.frameHandle);
-                if (frame?.threadId && this.cudaThread.hasFocus) {
-                    await this.resetCudaFocus();
-                }
-            } else {
-                const ref = frameOrObjectRef as ContainerObjectReference;
-
-                await this.populateChildren(ref);
-
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                response.body.variables = ref.children!.map((child) => {
-                    const variableReference = typeof child.reference === 'number' ? child.reference : 0;
-                    return new Variable(child.name, child.value, variableReference);
-                });
-
-                this.sendResponse(response);
-            }
-        } catch (error) {
-            this.sendErrorResponse(response, 1, (error as Error).message);
-        }
-    }
-
-    // eslint-disable-next-line class-methods-use-this
-    protected async populateChildren(ref: ContainerObjectReference): Promise<void> {
-        const listChildrenResp = await sendVarListChildren(this.gdb, {
-            name: ref.varobjName,
-            printValues: MIVarPrintValues.all
-        });
-
-        const rawChildVarObjects: MIVarChild[] = listChildrenResp.children;
-
-        const flattenedChildVarObjects: MIVarChild[] = [];
-        const displayNames = new Map<string, string>();
-
-        // eslint-disable-next-line unicorn/no-for-loop
-        for (let i = 0; i < rawChildVarObjects.length; i += 1) {
-            const childVarObj = rawChildVarObjects[i];
-            if (this.isChildOfClass(childVarObj)) {
-                // eslint-disable-next-line no-await-in-loop
-                const expandedChildrenResp: any = await sendVarListChildren(this.gdb, {
-                    name: childVarObj.name,
-                    printValues: MIVarPrintValues.all
-                });
-
-                const expandedChildren: MIVarChild[] = expandedChildrenResp.children;
-
-                expandedChildren.forEach((expChild) => {
-                    flattenedChildVarObjects.push(expChild);
-
-                    let displayName = expChild.name;
-                    if (displayName.startsWith(`${childVarObj.name}.`)) {
-                        displayName = displayName.slice(childVarObj.name.length + 1);
-                    }
-
-                    displayNames.set(expChild.name, displayName);
-                });
-            } else {
-                flattenedChildVarObjects.push(childVarObj);
-
-                let displayName = childVarObj.name;
-                if (displayName.startsWith(`${ref.varobjName}.`)) {
-                    displayName = displayName.slice(ref.varobjName.length + 1);
-                }
-
-                displayNames.set(childVarObj.name, displayName);
-            }
-        }
-
-        ref.children = flattenedChildVarObjects.map((child) => {
-            return {
-                // displayNames should always have a value for child.name.
-                name: displayNames.get(child.name) ?? '<ERROR>',
-                reference:
-                    Number.parseInt(child.numchild) === 0
-                        ? child.name
-                        : this.variableHandles.create({
-                              type: 'object',
-                              frameHandle: ref.frameHandle,
-                              varobjName: child.name
-                          }),
-                value: child.value ?? '',
-                type: child.type
-            };
-        });
-    }
-
-    protected async setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): Promise<void> {
-        const ref = this.variableHandles.get(args.variablesReference);
-
-        if (ref === undefined) {
-            this.sendErrorResponse(response, 1, 'Invalid variable reference');
-        }
-
-        let varObjName: string | undefined;
-
-        let childEntry:
-            | {
-                  name: string;
-                  reference: string | number;
-                  value: string;
-                  type: string;
-              }
-            | undefined;
-
-        if (ref.type === 'frame') {
-            if ((ref as RegistersVariableReference)?.scope !== 'registers') {
-                varObjName = this.varStore.getLocalByName(args.name)?.varname;
-            }
-        } else {
-            const objRef = ref as ContainerObjectReference;
-            childEntry = objRef.children?.filter((child) => child.name === args.name)[0];
-            if (childEntry !== undefined) {
-                const childRef = childEntry.reference;
-                if (typeof childRef === 'number') {
-                    varObjName = (this.variableHandles.get(childRef) as ContainerObjectReference).varobjName;
-                } else {
-                    varObjName = childRef as string;
-                }
-            }
-        }
-
-        if (varObjName) {
-            const assignResp = await sendVarAssign(this.gdb, { varname: varObjName, expression: args.value });
-
-            if (assignResp.value === args.value) {
-                const changes = await this.varStore.update();
-
-                // If this assignment resulted in values in other variables changing
-                // (usually because two members point to the same memory location),
-                // send back an Invalidated event for variables.
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                const shouldInvalidate = !changes.every((c) => c.name.startsWith(varObjName!));
-
-                if (shouldInvalidate) {
-                    this.sendResponse(response);
-                    this.sendEvent(new InvalidatedEvent(['variables']));
-                    return;
-                }
-
-                const update = changes.filter((c) => c.name === varObjName)[0];
-                if (update) {
-                    let variablesReference = 0;
-                    let type: string | undefined;
-                    if (ref.type === 'frame') {
-                        const varObj = this.varStore.updateLocal(varObjName, update as VarUpdateChanges);
-
-                        if (varObj) {
-                            type = varObj.type;
-
-                            if (Number.parseInt(varObj.numchild, 10) > 0) {
-                                variablesReference = this.variableHandles.create({
-                                    type: 'object',
-                                    frameHandle: ref.frameHandle,
-                                    varobjName: varObjName
-                                });
-                            }
-                        }
-                    } else {
-                        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                        const entry = childEntry!;
-
-                        if ((update.type_changed && Number.parseInt(update.new_num_children, 10) > 0) || (!update.type_changed && typeof entry.reference === 'number')) {
-                            // We don't delete the old handle here because handles
-                            // are reset every time the program stops.
-                            variablesReference = this.variableHandles.create({
-                                type: 'object',
-                                frameHandle: ref.frameHandle,
-                                varobjName: varObjName
-                            });
-
-                            entry.reference = variablesReference > 0 ? variablesReference : varObjName;
-                        }
-
-                        if (update.type_changed) {
-                            entry.type = update.new_type;
-                        }
-
-                        type = entry.type;
-                    }
-
-                    response.body = {
-                        value: args.value,
-                        type,
-                        variablesReference
-                    };
-                }
-            }
-        }
-
-        this.sendResponse(response);
-    }
-
-    protected async localsRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments, ref: FrameVariableReference): Promise<void> {
-        response.body.variables = [];
-
-        const frame = this.frameHandles.get(ref.frameHandle);
-        if (!frame) {
             return;
         }
 
-        const stackVarObjects = await this.varStore.getLocals(frame.threadId || this.cudaThread.focus, frame.frameId);
-        response.body.variables = stackVarObjects.map(
-            (vo) =>
-                new Variable(
-                    vo.expression,
-                    vo.value,
-                    Number.parseInt(vo.numchild) === 0
-                        ? 0
-                        : this.variableHandles.create({
-                              type: 'object',
-                              frameHandle: frame.frameId,
-                              varobjName: vo.varname
-                          })
-                )
-        );
-
-        this.sendResponse(response);
+        await super.scopesRequest(response, args);
     }
 
-    protected async registersRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments, reference: RegistersVariableReference): Promise<void> {
-        response.body.variables = [];
+    protected async stackTraceRequest(response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments): Promise<void> {
+        if (this.isRunning || (args.threadId === CUDA_THREAD.ID && this.cudaFocus === undefined)) {
+            response.body = { totalFrames: 0, stackFrames: [] };
+            this.sendResponse(response);
+            return;
+        }
+
+        await super.stackTraceRequest(response, args);
+    }
+
+    protected async variablesRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments): Promise<void> {
+        if (this.isRunning) {
+            response.body = { variables: [] };
+            this.sendResponse(response);
+            return;
+        }
+
+        const varRef = this.variableHandles.get(args.variablesReference);
+        if (varRef?.type === 'registers') {
+            const frameRef = this.frameHandles.get(varRef.frameHandle);
+            if (frameRef?.threadId === CUDA_THREAD.ID) {
+                const cudaRegRef = {
+                    ...varRef,
+                    isCuda: true
+                };
+                await this.cudaRegistersRequest(response, args, cudaRegRef);
+                return;
+            }
+        }
+
+        await super.variablesRequest(response, args);
+    }
+
+    protected async setVariableRequest(response: DebugProtocol.SetVariableResponse, args: DebugProtocol.SetVariableArguments): Promise<void> {
+        await super.setVariableRequest(response, args);
+
+        /* In cuda-gdb, assigning to a variable on the GPU thread corrupts the variable object, so we need
+         * to force a refresh.
+         */
+        this.variableHandles.reset();
+
+        /* The edited variable could be an alias of another variable (e.g. a pointer deref); let the client
+         * know that it needs to refresh all vars.
+         */
+        this.sendEvent(new InvalidatedEvent(['variables']));
+    }
+
+    protected async cudaRegistersRequest(response: DebugProtocol.VariablesResponse, args: DebugProtocol.VariablesArguments, reference: CudaRegisterVariableReference): Promise<void> {
+        response.body = { variables: [] };
 
         if (reference.registerGroup !== undefined) {
             const group = reference.registerGroup;
@@ -1486,9 +953,9 @@ export class CudaGdbSession extends GDBDebugSession {
 
                 const registerValues = registerValuesResp['register-values'] as RegisterNameValuePair[];
 
-                registerValues.forEach((pair) => {
+                for (const pair of registerValues) {
                     registerValuesMap.set(Number.parseInt(pair.number), pair.value);
-                });
+                }
             } catch {
                 // If there is an error in getting the value of a register localize the error so other registers are shown.
                 for (let i = 0; i < group.registers.length; i += 1) {
@@ -1500,16 +967,16 @@ export class CudaGdbSession extends GDBDebugSession {
 
                         const registerValue = registerValueResp['register-values'] as RegisterNameValuePair[];
 
-                        registerValue.forEach((pair) => {
+                        for (const pair of registerValue) {
                             registerValuesMap.set(Number.parseInt(pair.number), pair.value);
-                        });
+                        }
                     } catch {
                         registerValuesMap.set(reg.ordinal, 'N/A');
                     }
                 }
             }
 
-            group.registers.forEach((reg) => {
+            for (const reg of group.registers) {
                 const rawRegisterValue = registerValuesMap.get(reg.ordinal);
 
                 if (rawRegisterValue) {
@@ -1525,10 +992,10 @@ export class CudaGdbSession extends GDBDebugSession {
                         response.body.variables.push(new Variable(reg.name, formatRegister(numericalValue, group)));
                     }
                 }
-            });
+            }
         } else {
             let registerGroupDefinitions: any[] | undefined;
-            if (reference.isCUDA) {
+            if (reference.isCuda) {
                 registerGroupDefinitions = deviceRegisterGroups;
             }
             // else: We can add definitions here for machine registers and possibly allow reading the
@@ -1544,48 +1011,36 @@ export class CudaGdbSession extends GDBDebugSession {
 
                     const recordedRegisterNames = new Set<string>();
 
-                    parsedRegNames.forEach((registerName, ordinal) => {
-                        let matchingGroup;
-
+                    for (const [ordinal, registerName] of parsedRegNames.entries()) {
                         // Ignore registers with an empty name
                         if (registerName.length === 0) {
-                            return;
+                            continue;
                         }
 
-                        if (reference.isCUDA) {
+                        if (reference.isCuda) {
                             if (recordedRegisterNames.has(registerName)) {
                                 // If cuda-gdb returns repeated register names, that is a bug.
-                                return;
+                                continue;
                             }
 
                             recordedRegisterNames.add(registerName);
                         }
 
-                        // eslint-disable-next-line unicorn/no-for-loop
-                        for (let i = 0; i < registerGroups.length; i += 1) {
-                            const group = registerGroups[i];
-
-                            if (registerName.match(group.groupPattern)) {
-                                matchingGroup = group;
-                                break;
-                            }
-                        }
-
+                        const matchingGroup = registerGroups.find((group) => registerName.match(group.groupPattern));
                         if (matchingGroup) {
                             const register = new Register(ordinal, registerName, matchingGroup);
                             matchingGroup.registers.push(register);
                         }
-                    });
+                    }
 
                     reference.registerData = new RegisterData(registerGroups);
                 }
 
-                reference.registerData.registerGroups.forEach((group) => {
+                for (const group of reference.registerData.registerGroups) {
                     if (group.registers.length > 0 && !group.isHidden) {
-                        const groupRef: RegistersVariableReference = {
-                            type: 'frame',
-                            scope: 'registers',
-                            isCUDA: reference.isCUDA,
+                        const groupRef: CudaRegisterVariableReference = {
+                            type: 'registers',
+                            isCuda: reference.isCuda,
                             frameHandle: reference.frameHandle,
                             registerData: reference.registerData,
                             registerGroup: group
@@ -1595,7 +1050,7 @@ export class CudaGdbSession extends GDBDebugSession {
 
                         response.body.variables.push(new Variable(group.groupName, '', handle, 0, group.registers.length));
                     }
-                });
+                }
             } else {
                 // If there no register definitions, just display the registers in a default flat format.
                 const parsedRegNamesResp: any = await this.gdb.sendCommand('-data-list-register-names');
@@ -1604,11 +1059,11 @@ export class CudaGdbSession extends GDBDebugSession {
                 const registerValuesResp: any = await this.gdb.sendCommand('-data-list-register-values x');
                 const registerValues = registerValuesResp['register-values'] as RegisterNameValuePair[];
 
-                registerValues.forEach((pair) => {
+                for (const pair of registerValues) {
                     const regNum = Number.parseInt(pair.number);
                     const regName = parsedRegNames[regNum];
                     response.body.variables.push(new Variable(regName, pair.value));
-                });
+                }
             }
         }
 
@@ -1658,7 +1113,7 @@ export class CudaGdbSession extends GDBDebugSession {
     } as DebugProtocol.DisassembledInstruction;
 
     protected getInstructionSizeEstimate(): Promise<number | undefined> {
-        if (this.cudaThread.hasFocus) {
+        if (this.hasValidFocus()) {
             return this.getSassInstructionSize();
         }
 
@@ -1677,7 +1132,7 @@ export class CudaGdbSession extends GDBDebugSession {
     // - The number of iterations is determined by numberOfBackwardDisassembleSteps below.
 
     protected async getBackwardDisassembleStepSize(): Promise<number | undefined> {
-        if (this.cudaThread.hasFocus) {
+        if (this.hasValidFocus()) {
             const instructionsToRewind = 16;
             const sassInstructionSize = await this.getSassInstructionSize();
             return sassInstructionSize ? sassInstructionSize * instructionsToRewind : undefined;
@@ -1733,7 +1188,7 @@ export class CudaGdbSession extends GDBDebugSession {
     protected async disassembleRequest(response: DebugProtocol.DisassembleResponse, args: CDTDisassembleArguments): Promise<void> {
         logger.verbose(`[Disassemble request] Parameters: ${JSON.stringify(args)}`);
 
-        if (this.cudaThread.hasFocus) {
+        if (this.hasValidFocus()) {
             args.excludeRawOpcodes = true;
         }
 
@@ -1744,8 +1199,7 @@ export class CudaGdbSession extends GDBDebugSession {
 
         if (args.memoryReference === CudaGdbSession.invalidAddress) {
             logger.verbose(`[Disassemble request] Invalid initial address. Returning ${args.instructionCount} dummy instructions.`);
-
-            response.body = { instructions: new Array(args.instructionCount).fill(CudaGdbSession.dummyInstruction) };
+            response.body = { instructions: Array.from({ length: args.instructionCount }, () => CudaGdbSession.dummyInstruction) };
             this.sendResponse(response);
             return;
         }
@@ -1795,7 +1249,10 @@ export class CudaGdbSession extends GDBDebugSession {
         const instructionOffset = args.instructionOffset ?? 0;
         const indexOfSplice = indexOfCurrentInsn + instructionOffset;
 
-        let lastAddressRead = instructions[instructions.length - 1].address;
+        let lastAddressRead = instructions.at(-1)?.address;
+        if (lastAddressRead === undefined) {
+            return;
+        }
 
         let instructionsToSkip = 0;
 
@@ -1823,19 +1280,18 @@ export class CudaGdbSession extends GDBDebugSession {
                 await this.disassembleBackward(priorInstructions, instructions[0].address, backwardDisassembleStepSize);
                 if (priorInstructions.length === 0) {
                     logger.verbose(`[Disassemble request] Disassemble backward failed. Prepending ${instructionDeficit} dummy instruction(s) to the instructions array.`);
-
-                    instructions = new Array(instructionDeficit).fill(CudaGdbSession.dummyInstruction).concat(instructions);
+                    instructions = [...Array.from({ length: instructionDeficit }, () => CudaGdbSession.dummyInstruction), ...instructions];
                     break;
                 }
                 if (priorInstructions.length <= instructionDeficit) {
-                    instructions = priorInstructions.concat(instructions);
+                    instructions = [...priorInstructions, ...instructions];
                     instructionDeficit -= priorInstructions.length;
 
                     logger.verbose(`[Disassemble request] Disassemble backward returned ${priorInstructions.length} instruction(s). New instruction deficit: ${instructionDeficit}.`);
                 } else {
                     logger.verbose(`[Disassemble request] Disassemble backward returned ${priorInstructions.length} > ${instructionDeficit} instruction(s).`);
 
-                    instructions = priorInstructions.slice(-instructionDeficit).concat(instructions);
+                    instructions = [...priorInstructions.slice(-instructionDeficit), ...instructions];
                     break;
                 }
             }
@@ -1868,7 +1324,7 @@ export class CudaGdbSession extends GDBDebugSession {
             }
 
             // eslint-disable-next-line no-constant-condition
-            while (true) {
+            while (lastAddressRead !== undefined) {
                 let result2: MIDataDisassembleResponse | undefined;
 
                 // Never take too few instructions
@@ -1888,7 +1344,7 @@ export class CudaGdbSession extends GDBDebugSession {
                     logger.error(`[Disassemble request] Disassemble forward: Error while trying to retrieve instructions following address ${startAddress}. Fetch size: ${fetchSize}, Error: ${errorString}`);
 
                     logger.verbose(`[Disassemble request] Disassemble forward: Appending the instructions array with ${args.instructionCount - instructions.length} dummy instruction(s).`);
-                    instructions = instructions.concat(new Array(args.instructionCount - instructions.length).fill(CudaGdbSession.dummyInstruction));
+                    instructions = [...instructions, ...Array.from({ length: args.instructionCount - instructions.length }, () => CudaGdbSession.dummyInstruction)];
                     break;
                 }
 
@@ -1899,7 +1355,7 @@ export class CudaGdbSession extends GDBDebugSession {
                 if (!instructionsWritten && !instructionsSkipped) {
                     logger.error(`[Disassemble request] Disassemble forward: No instructions returned while trying to retrieve instructions following address ${startAddress}. Fetch size: ${fetchSize}`);
                     logger.verbose(`[Disassemble request] Disassemble forward: Appending the instructions array with ${args.instructionCount - instructions.length} dummy instruction(s).`);
-                    instructions = instructions.concat(new Array(args.instructionCount - instructions.length).fill(CudaGdbSession.dummyInstruction));
+                    instructions = [...instructions, ...Array.from({ length: args.instructionCount - instructions.length }, () => CudaGdbSession.dummyInstruction)];
                     break;
                 }
 
@@ -1908,7 +1364,7 @@ export class CudaGdbSession extends GDBDebugSession {
                     instructions.splice(args.instructionCount);
                     break;
                 } else {
-                    lastAddressRead = instructions.at(-1)?.address ?? skippedInstructions[skippedInstructions.length - 1].address;
+                    lastAddressRead = instructions.at(-1)?.address ?? skippedInstructions.at(-1)?.address;
                 }
             }
 
@@ -1943,12 +1399,18 @@ export class CudaGdbSession extends GDBDebugSession {
                 return addr1 >>> 0 === addr2;
             };
 
-            if (args.instructionOffset === 1 && instructions.length > 0 && instructions[0].address !== CudaGdbSession.invalidAddress) {
-                assert(follows(currentInstruction, instructions[0]), 'Scroll down condition not met.');
+            if (args.instructionOffset === 1) {
+                const firstInstruction = instructions.at(0);
+                if (firstInstruction !== undefined && firstInstruction.address !== CudaGdbSession.invalidAddress) {
+                    assert(follows(currentInstruction, firstInstruction), 'Scroll down condition not met.');
+                }
             }
 
-            if (args.instructionOffset && args.instructionOffset < 0 && args.instructionCount === -args.instructionOffset && instructions.length > 0 && instructions[instructions.length - 1].address !== CudaGdbSession.invalidAddress) {
-                assert(follows(instructions[instructions.length - 1], currentInstruction), 'Scroll up condition not met.');
+            if (args.instructionOffset && args.instructionOffset < 0 && args.instructionCount === -args.instructionOffset) {
+                const lastInstruction = instructions.at(-1);
+                if (lastInstruction !== undefined && lastInstruction.address !== CudaGdbSession.invalidAddress) {
+                    assert(follows(lastInstruction, currentInstruction), 'Scroll up condition not met.');
+                }
             }
 
             for (let i = 0; i < instructions.length - 1; i += 1) {
@@ -1959,9 +1421,9 @@ export class CudaGdbSession extends GDBDebugSession {
         }
 
         if (args.excludeRawOpcodes) {
-            instructions.forEach((i) => {
-                i.instructionBytes = undefined;
-            });
+            for (const instr of instructions) {
+                instr.instructionBytes = undefined;
+            }
         }
 
         response.body = { instructions };
@@ -1970,66 +1432,128 @@ export class CudaGdbSession extends GDBDebugSession {
         logger.verbose(`[Disassemble request] Response sent with ${instructions.length} instruction(s).`);
     }
 
-    private async changeCudaFocusRequest(response: CudaDebugProtocol.ChangeCudaFocusResponse, args: any): Promise<void> {
-        try {
-            const typedArgs: CudaDebugProtocol.ChangeCudaFocusArguments = args as CudaDebugProtocol.ChangeCudaFocusArguments;
-            const focus: types.CudaFocus = typedArgs.focus as types.CudaFocus;
-            const setFocusCommand: string = utils.formatSetFocusCommand(focus);
-            await this.gdb.sendCommand(setFocusCommand);
+    private async changeCudaFocusRequest(response: CudaDebugProtocol.ChangeCudaFocusResponse, args: CudaDebugProtocol.ChangeCudaFocusArguments): Promise<void> {
+        const typedArgs = args as CudaDebugProtocol.ChangeCudaFocusArguments;
+        let newFocus = typedArgs.focus as types.CudaFocus;
 
-            if (!response.body) {
-                response.body = {};
-            }
-
-            let newFocus: types.CudaFocus | undefined;
-
-            // TODO: Verify that the set focus command succeeded, find a way to get current focus
-            if (focus.type === 'software' && this.cudaThread.focus?.type === 'software') {
-                const coerceDim = (dim1?: types.CudaDim, dim2?: types.CudaDim): types.CudaDim => {
-                    const x: number = dim1?.x ?? dim2?.x ?? 0;
-                    const y: number = dim1?.y ?? dim2?.y ?? 0;
-                    const z: number = dim1?.z ?? dim2?.z ?? 0;
-
-                    return { x, y, z };
-                };
-
-                const blockIdx: types.CudaDim = coerceDim(focus.blockIdx, this.cudaThread.focus?.blockIdx);
-                const threadIdx: types.CudaDim = coerceDim(focus.threadIdx, this.cudaThread.focus?.threadIdx);
-                newFocus = { type: 'software', blockIdx, threadIdx };
-            } else if (focus.type === 'hardware' && this.cudaThread.focus?.type === 'hardware') {
-                const sm: number = focus.sm ?? this.cudaThread.focus?.sm ?? 0;
-                const warp: number = focus.warp ?? this.cudaThread.focus?.warp ?? 0;
-                const lane: number = focus.lane ?? this.cudaThread.focus?.lane ?? 0;
-                newFocus = { type: 'hardware', sm, warp, lane };
-            } else {
-                this.sendErrorResponse(response, 1, 'Mixing hardware and software coordinates to change focus is not supported.');
-            }
-
-            if (newFocus) {
-                this.cudaThread.setFocus(newFocus);
-
-                response.body.focus = newFocus;
-                this.sendResponse(response);
-
-                this.sendEvent(new ChangedCudaFocusEvent(newFocus));
-                this.invalidateState();
-            }
-        } catch (error) {
-            this.sendErrorResponse(response, 1, (error as Error).message);
+        if (newFocus.type === 'software') {
+            const currentFocus = this.cudaFocus?.type === 'software' ? this.cudaFocus : undefined;
+            const coalesceDim = (newDim?: types.CudaDim, currentDim?: types.CudaDim): types.CudaDim => ({
+                x: newDim?.x ?? currentDim?.x,
+                y: newDim?.y ?? currentDim?.y,
+                z: newDim?.z ?? currentDim?.z
+            });
+            newFocus = {
+                type: 'software',
+                blockIdx: coalesceDim(newFocus.blockIdx, currentFocus?.blockIdx),
+                threadIdx: coalesceDim(newFocus.threadIdx, currentFocus?.threadIdx)
+            };
+        } else if (newFocus.type === 'hardware') {
+            const currentFocus = this.cudaFocus?.type === 'hardware' ? this.cudaFocus : undefined;
+            newFocus = {
+                type: 'hardware',
+                sm: newFocus.sm ?? currentFocus?.sm ?? 0,
+                warp: newFocus.warp ?? currentFocus?.warp ?? 0,
+                lane: newFocus.lane ?? currentFocus?.lane ?? 0
+            };
         }
-    }
 
-    private async resetCudaFocus(): Promise<void> {
-        if (!this.cudaThread.hasFocus) {
+        if (!utils.isCudaFocusValid(newFocus)) {
+            this.sendErrorResponse(response, 1, 'Mixing hardware and software coordinates to change focus is not supported.');
             return;
         }
 
-        const setFocusCommand: string = utils.formatSetFocusCommand(this.cudaThread.focus);
-        await this.gdb.sendCommand(setFocusCommand);
+        /* We don't actually need to change gdb focus here because it will be done by CudaGdbBackend automatically
+         * for gdb commands that need it right before they are sent. However, executing this command allows us to
+         * validate the new focus.
+         */
+        const setFocusCommand = utils.formatSetFocusCommand(newFocus);
+        try {
+            await this.gdb.sendCommand(setFocusCommand);
+        } catch (error) {
+            this.sendErrorResponse(response, 1, (error as Error).message);
+            return;
+        }
+
+        this.cudaFocus = newFocus;
+        response.body = { focus: newFocus };
+        this.sendResponse(response);
+        this.sendEvent(new InvalidatedEvent(['stacks', 'variables'], this.cudaThread.id));
     }
 
-    private invalidateState(): void {
-        this.sendStoppedEvent('Refreshing State', this.cudaThread.id);
+    protected async configureSetupCommands(args: CudaAttachRequestArguments | CudaLaunchRequestArguments, cdtArgs: AttachRequestArguments | LaunchRequestArguments): Promise<void> {
+        if (args.setupCommands) {
+            // Ensure initCommands exists and is an array
+            cdtArgs.initCommands = cdtArgs.initCommands ?? [];
+            for (const setupCommand of args.setupCommands) {
+                // Push the raw command text as an object with the ignoreFailures flag.
+                // The underlying GDBBackend.sendCommand should handle console vs MI commands.
+                cdtArgs.initCommands.push({
+                    text: setupCommand.text, // Use the raw text directly
+                    ignoreFailures: setupCommand.ignoreFailures
+                });
+            }
+        }
+    }
+
+    protected initializeLogger(args: CudaLaunchRequestArguments): void {
+        let logFilePath = args.logFile;
+        if (logFilePath && !path.isAbsolute(logFilePath)) {
+            logFilePath = path.resolve(logFilePath);
+        }
+
+        // Logger setup is handled in the base class
+        logger.init((outputEvent: OutputEvent) => this.sendEvent(outputEvent), logFilePath, true);
+        logger.verbose('Logger successfully initialized');
+    }
+
+    protected async runConfigureLaunch(
+        response: DebugProtocol.LaunchResponse | DebugProtocol.AttachResponse,
+        args: CudaLaunchRequestArguments | CudaAttachRequestArguments,
+        cdtArgs: LaunchRequestArguments | AttachRequestArguments,
+        requestType: RequestType
+    ): Promise<boolean> {
+        try {
+            await this.configureLaunch(args, cdtArgs, requestType);
+            return true;
+        } catch (error) {
+            response.success = false;
+            response.message = (error as Error).message;
+            logger.verbose(`Failed in configureLaunch() with error "${response.message}"`);
+            this.sendErrorResponse(response, 1, response.message);
+            // Although we sent an error response, we return false to signal failure to the caller.
+            return false;
+        }
+    }
+
+    protected async validateAndSetCudaGdbPath(response: DebugProtocol.LaunchResponse | DebugProtocol.AttachResponse, cdtArgs: LaunchRequestArguments | AttachRequestArguments, isQNX: boolean): Promise<boolean> {
+        const cudaGdbPath = await checkCudaGdb(cdtArgs.gdb, isQNX);
+
+        if (cudaGdbPath.kind === 'doesNotExist') {
+            response.success = false;
+            response.message = `Unable to find cuda-gdb. ${cdtArgs.gdb ? 'The specified path is incorrect.' : 'The path to cuda-gdb is not defined. Ensure you have cuda-gdb installed and the path is correct.'}`;
+            logger.verbose(`Failed with error ${response.message}`);
+            this.sendErrorResponse(response, 1, response.message);
+
+            return false;
+        }
+
+        logger.verbose('cuda-gdb found and accessible');
+        setCudaGdbPath(cdtArgs, cudaGdbPath.path);
+
+        return true;
+    }
+
+    protected async validateLinuxPlatform(response: DebugProtocol.LaunchResponse | DebugProtocol.AttachResponse): Promise<boolean> {
+        if (process.platform !== 'linux') {
+            response.success = false;
+            response.message = 'Unable to launch cuda-gdb on non-Linux system';
+            this.sendErrorResponse(response, 1, response.message);
+
+            return false;
+        }
+        logger.verbose('Confirmed that we are on a Linux system');
+        return true;
     }
 }
 
@@ -2054,10 +1578,10 @@ function toFixedHex(value: number, width: number): string {
     return `0x${'0'.repeat(paddingSize)}${hexStr}`;
 }
 
-export async function checkCudaGdb(path: string | undefined, isQNX = false): Promise<CudaGdbExists> {
+export async function checkCudaGdb(pathName: string | undefined, isQNX = false): Promise<CudaGdbExists> {
     const binaryName = isQNX ? 'cuda-qnx-gdb' : 'cuda-gdb';
 
-    if (path === undefined) {
+    if (pathName === undefined) {
         const res = which(binaryName)
             .then((cudaGdbPath: string) => {
                 return { kind: 'exists', path: cudaGdbPath } as CudaGdbPathResult;
@@ -2066,7 +1590,7 @@ export async function checkCudaGdb(path: string | undefined, isQNX = false): Pro
                 // checks if cuda-gdb exists in the default location
                 const defaultLocation = isQNX ? '/usr/local/cuda/bin/cuda-qnx-gdb' : '/usr/local/cuda/bin/cuda-gdb';
 
-                if (existsSync(defaultLocation)) {
+                if (fs.existsSync(defaultLocation)) {
                     return { kind: 'exists', path: defaultLocation } as CudaGdbPathResult;
                 }
                 logger.error(`Unable to find cuda-gdb, ${error}`);
@@ -2077,18 +1601,68 @@ export async function checkCudaGdb(path: string | undefined, isQNX = false): Pro
 
     // the path.endsWith check is for the scenario that the user enters a valid path but one that does not contain cuda-gdb
     // checks that path is valid and path contains cuda-gdb
-    const isCudaGdbPathValid = existsSync(path) && path.endsWith(binaryName);
+    const isCudaGdbPathValid = fs.existsSync(pathName) && pathName.endsWith(binaryName);
     if (isCudaGdbPathValid) {
-        return { kind: 'exists', path } as CudaGdbPathResult;
+        return { kind: 'exists', path: pathName } as CudaGdbPathResult;
     }
 
     return { kind: 'doesNotExist' } as NoCudaGdbResult;
 }
 
 export function setEnvVars(envVars: Environment[]): void {
-    envVars.forEach((envVarVal) => {
+    for (const envVarVal of envVars) {
         process.env[envVarVal.name] = envVarVal.value;
-    });
+    }
+}
+
+export function getLaunchEnvVars(pathToEnvFile: string): LaunchEnvVarSpec[] {
+    if (!path.isAbsolute(pathToEnvFile)) {
+        pathToEnvFile = path.resolve(pathToEnvFile);
+    }
+
+    let envFileContents = '';
+    try {
+        envFileContents = fs.readFileSync(pathToEnvFile, { encoding: 'utf8', flag: 'r' });
+    } catch (error) {
+        throw new Error(`Unable to read launch environment variables file:\n${(error as Error).message}`);
+    }
+
+    const unsetString = 'unset';
+
+    const envVarSpecs: LaunchEnvVarSpec[] = [];
+    const envFileLines = envFileContents.split(/\r?\n/);
+    for (let line of envFileLines) {
+        line = line.trim();
+        if (line.length === 0 || line.startsWith('#')) {
+            continue;
+        }
+
+        const eqIdx = line.indexOf('=');
+        if (eqIdx >= 0) {
+            const name = line.slice(0, eqIdx).trim();
+            if (name.length > 0) {
+                const value = line.slice(eqIdx + 1).trim();
+                envVarSpecs.push({ type: 'set', name, value });
+                continue;
+            }
+        } else if (line.startsWith(unsetString) && line.length > unsetString.length && line.slice(unsetString.length, unsetString.length + 1).trim().length === 0) {
+            const name = line.slice(unsetString.length + 1).trim();
+            if (name.length > 0) {
+                envVarSpecs.push({ type: 'unset', name });
+                continue;
+            }
+        }
+
+        logger.warn(`Invalid environment variable specification: ${line}`);
+    }
+
+    return envVarSpecs;
+}
+
+export function parseArgs(args: string | string[]): string {
+    const parsedArgs = typeof args === 'string' ? args : `"${args.join('" "')}"`;
+
+    return parsedArgs;
 }
 
 async function getDevicesInfo(gdb: GDBBackend): Promise<types.GpuInfo[]> {
@@ -2115,6 +1689,18 @@ async function getSystemInfo(gdb: GDBBackend): Promise<types.SystemInfo> {
     };
 
     return systemInfo;
+}
+
+function configureEnvfile(args: CudaAttachRequestArguments | CudaLaunchRequestArguments, cdtArgs: AttachRequestArguments | LaunchRequestArguments): void {
+    if ('envFile' in args && args.envFile) {
+        const envVarSpecs = getLaunchEnvVars(args.envFile);
+        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        cdtArgs.initCommands?.unshift(...envVarSpecs.map((spec) => (spec.type === 'set' ? `set env ${spec.name}=${spec.value!}` : `unset env ${spec.name}`)));
+    }
+}
+
+function setCudaGdbPath(cdtLaunchArgs: LaunchRequestArguments, path: string): void {
+    cdtLaunchArgs.gdb = path;
 }
 
 /* eslint-enable max-classes-per-file */

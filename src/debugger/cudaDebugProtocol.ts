@@ -15,18 +15,17 @@ import * as types from './types';
 
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace CudaDebugProtocol {
-    export abstract class Request {
-        static readonly changeCudaFocus: string = 'changeCudaFocus';
+    export enum Request {
+        changeCudaFocus = 'changeCudaFocus'
     }
 
-    export abstract class Event {
-        static readonly changedCudaFocus: string = 'changedCudaFocus';
-
-        static readonly systemInfo: string = 'systemInfo';
+    export enum Event {
+        changedCudaFocus = 'changedCudaFocus',
+        systemInfo = 'systemInfo'
     }
 
     export interface ChangeCudaFocusRequest extends DebugProtocol.Request {
-        // command: 'changeCudaFocus' (Request.changeCudaFocus)
+        //command: Request.changeCudaFocus;
         arguments: ChangeCudaFocusArguments;
     }
 
@@ -41,14 +40,14 @@ export namespace CudaDebugProtocol {
     }
 
     export interface ChangedCudaFocusEvent extends DebugProtocol.Event {
-        // event: 'changedCudaFocus' (Event.changedCudaFocus)
+        //event: Event.changedCudaFocus;
         body: {
             focus?: types.CudaFocus;
         };
     }
 
     export interface SystemInfoEvent extends DebugProtocol.Event {
-        // event: 'systemInfo' (Request.systemInfo)
+        //event: Event.systemInfo;
         body: {
             systemInfo?: types.SystemInfo;
         };

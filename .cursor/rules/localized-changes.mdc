@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Only edit things that are directly relevant to the task at hand. Don't add gratuitous comments to existing code or refactor things not relevant to the change being made unless specifically requested. 

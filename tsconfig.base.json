@@ -1,0 +1,22 @@
+{
+    "extends": "@tsconfig/node20/tsconfig.json",
+    "compilerOptions": {
+        "rootDir": "",
+        "outDir": "out",
+        "composite": true,
+        "sourceMap": true,
+        "declarationMap": true,
+        "strictNullChecks": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true,
+        "noUnusedLocals": true,
+        "resolveJsonModule": true,
+        "allowJs": true,
+        "types": ["node"],
+    },
+    "files": [
+        "types.d.ts",
+    ],
+    "include": [],
+    "exclude": [],
+}

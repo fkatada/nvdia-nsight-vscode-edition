@@ -1,0 +1,4 @@
+CompileFlags:
+  Add:
+    - -L/usr/local/cuda/lib64
+    - -I/usr/local/cuda/include

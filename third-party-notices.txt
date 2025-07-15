@@ -1,50 +1,80 @@
 Nsight Visual Studio Code Edition incorporates third-party components listed below:
 
-
 ********************************************************************************
 
-
-@vscode/debugadapter@1.59.0
+@vscode/debugadapter@1.67.0
 Publisher: Microsoft Corporation
 Repository: https://github.com/microsoft/vscode-debugadapter-node
 License: MIT
 License text:
 
-Copyright (c) Microsoft Corporation
-
-All rights reserved. 
-
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+Copyright (c) Microsoft Corporation
+
+All rights reserved. 
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+For Microsoft vscode-debugadapter-node
+
+This project incorporates material from the project(s) listed below (collectively, “Third Party Code”).
+Microsoft is not the original author of the Third Party Code.  The original copyright notice and license
+under which Microsoft received such Third Party Code are set out below. This Third Party Code is licensed
+to you under their original license terms set forth below.  Microsoft reserves all other rights not expressly
+granted, whether by implication, estoppel or otherwise.
+
+1.       DefinitelyTyped version 0.0.1 (https://github.com/borisyankov/DefinitelyTyped)
+
+This project is licensed under the MIT license.
+Copyrights are respective of each contributor listed at the beginning of each definition file.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 
 ********************************************************************************
 
-
-@vscode/debugprotocol@1.59.0
+@vscode/debugprotocol@1.67.0
 Publisher: Microsoft Corporation
 Repository: https://github.com/microsoft/vscode-debugadapter-node
 License: MIT
 License text:
 
-Copyright (c) Microsoft Corporation
-
-All rights reserved. 
-
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+Copyright (c) Microsoft Corporation
+
+All rights reserved. 
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED *AS IS*, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************************************************************************
-
 
 asynckit@0.4.0
 Publisher: Alex Indigo
@@ -76,8 +106,7 @@ SOFTWARE.
 
 ********************************************************************************
 
-
-axios@1.4.0
+axios@1.7.6
 Publisher: Matt Zabriskie
 Repository: https://github.com/axios/axios
 License: MIT
@@ -92,7 +121,6 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************************************************************************
-
 
 cdt-gdb-adapter@0.0.19
 Publisher: Eclipse CDT
@@ -380,7 +408,6 @@ version(s), and exceptions or additional permissions here}."
 
 ********************************************************************************
 
-
 combined-stream@1.0.8
 Publisher: Felix Geisendörfer
 Repository: https://github.com/felixge/node-combined-stream
@@ -408,7 +435,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ********************************************************************************
-
 
 delayed-stream@1.0.0
 Publisher: Felix Geisendörfer
@@ -438,8 +464,7 @@ THE SOFTWARE.
 
 ********************************************************************************
 
-
-follow-redirects@1.15.2
+follow-redirects@1.15.6
 Publisher: Ruben Verborgh
 Repository: https://github.com/follow-redirects/follow-redirects
 License: MIT
@@ -465,7 +490,6 @@ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************************************************************************
-
 
 form-data@4.0.0
 Publisher: Felix Geisendörfer
@@ -495,8 +519,7 @@ Copyright (c) 2012 Felix Geisendörfer (felix@debuggable.com) and contributors
 
 ********************************************************************************
 
-
-fs-extra@10.0.1
+fs-extra@11.2.0
 Publisher: JP Richardson
 Repository: https://github.com/jprichardson/node-fs-extra
 License: MIT
@@ -520,8 +543,7 @@ OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHE
 
 ********************************************************************************
 
-
-graceful-fs@4.2.9
+graceful-fs@4.2.11
 Publisher: undefined
 Repository: https://github.com/isaacs/node-graceful-fs
 License: ISC
@@ -529,7 +551,7 @@ License text:
 
 The ISC License
 
-Copyright (c) Isaac Z. Schlueter, Ben Noordhuis, and Contributors
+Copyright (c) 2011-2022 Isaac Z. Schlueter, Ben Noordhuis, and Contributors
 
 Permission to use, copy, modify, and/or distribute this software for any
 purpose with or without fee is hereby granted, provided that the above
@@ -544,7 +566,6 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ********************************************************************************
-
 
 isexe@2.0.0
 Publisher: Isaac Z. Schlueter
@@ -570,7 +591,6 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ********************************************************************************
 
-
 jsonfile@6.1.0
 Publisher: JP Richardson
 Repository: https://github.com/jprichardson/node-jsonfile
@@ -595,40 +615,39 @@ OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHE
 
 ********************************************************************************
 
-
-mime-db@1.44.0
+mime-db@1.52.0
 Publisher: undefined
 Repository: https://github.com/jshttp/mime-db
 License: MIT
 License text:
 
+(The MIT License)
 
-The MIT License (MIT)
+Copyright (c) 2014 Jonathan Ong <me@jongleberry.com>
+Copyright (c) 2015-2022 Douglas Christopher Wilson <doug@somethingdoug.com>
 
-Copyright (c) 2014 Jonathan Ong me@jongleberry.com
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+'Software'), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
 
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************************************************************************
 
-
-mime-types@2.1.27
+mime-types@2.1.35
 Publisher: undefined
 Repository: https://github.com/jshttp/mime-types
 License: MIT
@@ -660,29 +679,6 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************************************************************************
 
-
-node-addon-api@4.3.0
-Publisher: undefined
-Repository: https://github.com/nodejs/node-addon-api
-License: MIT
-License text:
-
-The MIT License (MIT)
-=====================
-
-Copyright (c) 2017 Node.js API collaborators
------------------------------------
-
-*Node.js API collaborators listed at <https://github.com/nodejs/node-addon-api#collaborators>*
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-********************************************************************************
-
-
 proxy-from-env@1.1.0
 Publisher: Rob Wu
 Repository: https://github.com/Rob--W/proxy-from-env
@@ -712,8 +708,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************************************************************************
 
-
-universalify@2.0.0
+universalify@2.0.1
 Publisher: Ryan Zimmerman
 Repository: https://github.com/RyanZim/universalify
 License: MIT
@@ -742,8 +737,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************************************************************************
 
-
-uuid@8.3.2
+uuid@10.0.0
 Publisher: undefined
 Repository: https://github.com/uuidjs/uuid
 License: MIT
@@ -761,10 +755,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ********************************************************************************
 
-
-which@2.0.2
-Publisher: Isaac Z. Schlueter
-Repository: https://github.com/isaacs/node-which
+which@3.0.1
+Publisher: GitHub Inc.
+Repository: https://github.com/npm/node-which
 License: ISC
 License text:
 

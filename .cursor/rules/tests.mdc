@@ -1,0 +1,14 @@
+---
+description: 
+globs: src/test/**
+alwaysApply: false
+---
+Don't use Chai for tests, use Jest instead.
+
+# Asserts
+
+Use `expect.objectContaining` where possible to validate structured outputs in their entirety, instead of drilling down to individual properties to validate them one by one.
+
+# Test programs
+
+Don't hardcode line numbers for test programs, it's brittle and requires renumbering if test program is edited. Instead, use comments in debuggee code and `TestUtils.getLineNumbersFromComments` in test code. Use `TestUtils.getTestSource` to generate expected DAP `source` values.

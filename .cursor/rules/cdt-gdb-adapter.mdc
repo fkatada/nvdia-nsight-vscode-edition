@@ -1,0 +1,6 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+cdt-gdb-adapter is a vendored dependency that can be edited directly if needed to simplify the solution. However, it may not reference anything from the main package.

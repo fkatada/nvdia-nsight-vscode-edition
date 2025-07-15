@@ -3,10 +3,10 @@ all: build
 build: driverApis kernel.fatbin
 
 driverApis: driverApis.cpp
-	nvcc -g -G -o $@ $+ -lcuda
+	nvcc -arch=sm_75 -g -G -o $@ $+ -lcuda
 
 kernel.fatbin: kernel.cu
-	nvcc -g -G -o $@ $+ -fatbin
+	nvcc -arch=sm_75 -g -G -o $@ $+ -fatbin
 
 clean:
 	rm -f driverApis

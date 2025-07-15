@@ -12,7 +12,7 @@
 import { TestUtils } from './testUtils';
 import { CudaDebugClient } from './cudaDebugClient';
 
-describe('Basic tests', async () => {
+describe('Basic tests', () => {
     let dc: CudaDebugClient;
 
     beforeEach(async () => {

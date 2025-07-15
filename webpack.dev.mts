@@ -9,9 +9,9 @@
 |                                                                                      |
 \* ---------------------------------------------------------------------------------- */
 
-const { merge } = require('webpack-merge');
-const base = require('./webpack.config');
+import { merge } from 'webpack-merge';
+import base from './webpack.base.mts';
 
-module.exports = merge(base, {
-    mode: 'production'
+export default merge(base, {
+    mode: 'development'
 });

@@ -13,7 +13,7 @@ import { expect } from 'chai';
 import { TestUtils } from './testUtils';
 import { CudaDebugClient } from './cudaDebugClient';
 
-describe('Stepping tests', async () => {
+describe('Stepping tests', () => {
     let dc: CudaDebugClient;
 
     const programName = 'variables';

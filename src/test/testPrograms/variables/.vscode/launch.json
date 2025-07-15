@@ -5,7 +5,6 @@
             "name": "CUDA: Debug with CUDA-GDB",
             "type": "cuda-gdb",
             "request": "launch",
-            "gdb": "cuda-gdb",
             "program": "${workspaceFolder}/variables",
             "logFile": "${workspaceFolder}/.rubicon_log",
             "verboseLogging": true,

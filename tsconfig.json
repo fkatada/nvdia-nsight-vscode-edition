@@ -1,24 +1,21 @@
 {
+    "extends": "./tsconfig.base.json",
     "compilerOptions": {
-        "module": "commonjs",
-        "target": "es6",
-        "outDir": "out",
-        "lib": [
-            "es6"
-        ],
-
-        "sourceMap": true,
-        "rootDir": "src",
-        "strict": true,
-        "strictNullChecks": true,
-        "noImplicitReturns": true,
-        "noFallthroughCasesInSwitch": true,
-        "noUnusedLocals": true,
-        "resolveJsonModule": true
+        "module": "Node16",
+        "moduleResolution": "Node16",
+        "noEmit": true,
+        "allowImportingTsExtensions": true,
     },
+    "include": ["**/*.ts", "**/*.mts", "**/*.js", "**/*.mjs", "**/*.json"],
     "exclude": [
-        "node_modules",
         ".vscode-test",
-        "cdt-gdb-adapter"
+        "cdt-gdb-adapter",
+        "node_modules",
+        "out",
+        "src",
+    ],
+    "references": [
+        {"path": "src"},
+        {"path": "src/test"},
     ]
 }

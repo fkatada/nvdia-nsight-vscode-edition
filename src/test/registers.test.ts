@@ -10,10 +10,9 @@
 \* ---------------------------------------------------------------------------------- */
 
 import { expect } from 'chai';
-import { DebugProtocol } from '@vscode/debugprotocol';
 import { TestUtils } from './testUtils';
 
-describe('Register tests', async () => {
+describe('Register tests', () => {
     it('Device registers are shown correctly', async () => {
         const dc = await TestUtils.launchDebugger('variables/variables');
 
@@ -35,13 +34,7 @@ describe('Register tests', async () => {
         const scopesResp = await dc.scopesRequest({ frameId });
         const { scopes } = scopesResp.body;
 
-        let registersScope: DebugProtocol.Scope | undefined;
-
-        scopes.forEach((s) => {
-            if (s.name === 'Registers') {
-                registersScope = s;
-            }
-        });
+        const registersScope = scopes.find((s) => s.name === 'Registers');
 
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         expect(registersScope).exist;
@@ -54,13 +47,7 @@ describe('Register tests', async () => {
         let variablesResp = await dc.variablesRequest({ variablesReference: registersScope?.variablesReference });
         let { variables } = variablesResp.body;
 
-        let sassRegGroup: DebugProtocol.Variable | undefined;
-
-        variables.forEach((v) => {
-            if (v.name === 'SASS') {
-                sassRegGroup = v;
-            }
-        });
+        const sassRegGroup = variables.find((v) => v.name === 'SASS');
 
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         expect(sassRegGroup).exist;
@@ -74,15 +61,7 @@ describe('Register tests', async () => {
 
         variables = variablesResp.body.variables;
 
-        let r0Found = false;
-
-        // eslint-disable-next-line unicorn/no-for-loop
-        for (let i = 0; i < variables.length; i += 1) {
-            if (variables[i].name === 'R0') {
-                r0Found = true;
-                break;
-            }
-        }
+        const r0Found = variables.some((v) => v.name === 'R0');
 
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         expect(r0Found).true;
@@ -111,13 +90,7 @@ describe('Register tests', async () => {
         const scopesResp = await dc.scopesRequest({ frameId });
         const { scopes } = scopesResp.body;
 
-        let registersScope: DebugProtocol.Scope | undefined;
-
-        scopes.forEach((s) => {
-            if (s.name === 'Registers') {
-                registersScope = s;
-            }
-        });
+        const registersScope = scopes.find((s) => s.name === 'Registers');
 
         // eslint-disable-next-line @typescript-eslint/no-unused-expressions
         expect(registersScope).exist;
@@ -129,8 +102,7 @@ describe('Register tests', async () => {
         const variablesResp = await dc.variablesRequest({ variablesReference: registersScope?.variablesReference });
         const { variables } = variablesResp.body;
 
-        const registersMap = new Map<string, string>();
-        variables.forEach((v) => registersMap.set(v.name, v.value));
+        const registersMap = new Map<string, string>(variables.map((v) => [v.name, v.value]));
 
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         expect(Number.parseInt(registersMap.get('rcx')!)).eq(21);

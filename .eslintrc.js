@@ -11,8 +11,8 @@
 
 module.exports = {
     parserOptions: {
-        ecmaVersion: 6,
-        project: ['./tsconfig.json'],
+        ecmaVersion: 2022,
+        project: true,
         sourceType: 'module',
         tsconfigRootDir: __dirname
     },
@@ -22,28 +22,55 @@ module.exports = {
             version: 'latest'
         }
     },
-    plugins: ['@typescript-eslint', 'eslint-comments', 'prettier', 'promise', 'unicorn'],
-    extends: ['airbnb-typescript', 'plugin:@typescript-eslint/recommended', 'plugin:eslint-comments/recommended', 'plugin:promise/recommended', 'plugin:unicorn/recommended', 'prettier', 'prettier/@typescript-eslint'],
+    plugins: ['@typescript-eslint', 'eslint-comments', 'import', 'prettier', 'promise', 'unicorn'],
+    extends: ['plugin:@typescript-eslint/strict', 'plugin:eslint-comments/recommended', 'plugin:promise/recommended', 'plugin:unicorn/recommended', 'prettier'],
     rules: {
         // TODO: Temporary during early development, re-enable this once we have logging
         'no-console': 'off',
 
         // Allow function declaration hoisting
-        'no-use-before-define': ['error', { functions: false, classes: true, variables: true }],
+        '@typescript-eslint/no-use-before-define': ['error', { functions: false, classes: true, variables: true }],
 
         // Prefer named exports, regardless of how many exports there are
         'import/prefer-default-export': 'off',
 
-        // Reinforces preferences for named exports
-        'import/no-default-export': 'error',
+        // Allow referencing devDependencies in tests and development scripts
+        'import/no-extraneous-dependencies': [
+            'error',
+            {
+                devDependencies: ['gulpfile*.*', 'webpack.*', 'src/test/**/*.ts', 'updateThirdPartyNotices.ts']
+            }
+        ],
 
-        // Allow referencing devDependencies in tests
-        'import/no-extraneous-dependencies': ['error', { devDependencies: ['**/*.ts', '**/runTest.ts'] }],
+        // Allow property names such as `_foo`.
+        // Rationale: this is the de facto convention for accessor-backing properties.
+        'no-underscore-dangle': 'off',
+
+        // Allow `return await`.
+        // Rationale: explicit `await` makes function part of the callstack, which improves stacktraces.
+        'no-return-await': 'off',
+
+        // Allow multiple variables in a single `let` or `var` statement.
+        // Rationale: it's exactly like function parameters.
+        'one-var': 'off',
+
+        // Do not complain about `let ... = undefined`.
+        // Rationale: while a no-op, it is useful to clarify intent.
+        'no-undef-init': 'off',
+        'unicorn/no-useless-undefined': 'off',
+
+        // Do not complain about if (!x) and if (x != y).
+        // Rationale: sometimes negated conditions are more readable.
+        'unicorn/no-negated-condition': 'off',
+
+        // Do not complain about (await foo).bar.
+        // Rationale: simple one-liners can become less readable when broken up.
+        'unicorn/no-await-expression-member': 'off',
 
         radix: 'off',
 
         // Make Prettier settings lint rules
-        // 'prettier/prettier': ['error'],
+        'prettier/prettier': ['error'],
 
         // Prefer specifying return types, but don't require it for inline expressions
         '@typescript-eslint/explicit-function-return-type': ['error', { allowExpressions: true }],

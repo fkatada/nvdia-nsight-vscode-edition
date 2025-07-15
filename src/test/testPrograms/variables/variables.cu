@@ -110,7 +110,7 @@ __device__ void cudaComputeHashInner(TestType* input, unsigned *results)
 __global__ void cudaComputeHash(TestType* input, unsigned *results)
 {
     int idx = blockIdx.x * threadsPerBlock + threadIdx.x;
-    cudaComputeHashInner(input, results);
+    /*@deviceCall*/ cudaComputeHashInner(input, results);
     results[idx] += 1;
 }
 

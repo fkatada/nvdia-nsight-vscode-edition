@@ -11,7 +11,7 @@
 
 import * as fse from 'fs-extra';
 import { logger } from '@vscode/debugadapter';
-import { createInterface } from 'readline';
+import { createInterface } from 'node:readline';
 
 import * as types from './types';
 
@@ -63,8 +63,9 @@ export function formatCudaFocus(focus?: types.CudaFocus): string {
             return formattedFocus;
         }
 
-        default:
+        default: {
             assertNever(focus);
+        }
     }
 }
 
@@ -233,8 +234,9 @@ export function isCudaFocusValid(focus?: types.CudaFocus): boolean {
             return isValid;
         }
 
-        default:
+        default: {
             assertNever(focus);
+        }
     }
 }
 
@@ -258,14 +260,11 @@ export function formatSetDimCommand(name: string, dim?: types.CudaDim): string {
 }
 
 export function formatSetFocusCommand(focus?: types.CudaFocus): string {
-    // TODO: Find MI command to switch focus or a way to suppress output message
-    // Allow for partial focus change commands
-
     if (!focus) {
         return '';
     }
 
-    let setFocusCommand = 'cuda';
+    let setFocusCommand = '-cuda-focus-switch';
 
     if (focus.type === 'software') {
         const setBlockCommand = formatSetDimCommand('block', focus.blockIdx);
@@ -303,7 +302,7 @@ async function readReleaseFile(releaseFile: string): Promise<Record<string, stri
         for await (const fileLine of fileInterface) {
             const [key, value] = fileLine.split('=');
             if (key && value) {
-                const normalizedValue: string = value.replace(/[\r"']/gi, '');
+                const normalizedValue: string = value.replaceAll(/[\r"']/gi, '');
                 fileInfo[key] = normalizedValue;
             }
         }

@@ -1,6 +1,7 @@
 {
     "name": "nsight-vscode-edition",
-    "version": "2024.1.0",
+    "type": "commonjs",
+    "version": "2025.1.0",
     "displayName": "Nsight Visual Studio Code Edition",
     "description": "CUDA development and debugging support for VS Code",
     "publisher": "nvidia",
@@ -10,7 +11,7 @@
         "name": "NVIDIA"
     },
     "engines": {
-        "vscode": "^1.76.0"
+        "vscode": "^1.91.0"
     },
     "extensionPack": [
         "ms-vscode.cpptools"
@@ -35,7 +36,6 @@
         "Programming Languages"
     ],
     "activationEvents": [
-        "onCommand:cuda.changeDebugFocus",
         "onCommand:cuda.pickProcess",
         "onDebug",
         "onLanguage:cuda-cpp",
@@ -43,6 +43,23 @@
         "workspaceContains:**/*.cu"
     ],
     "main": "./dist/extension",
+    "files": [
+        "dist/**",
+        "images/**",
+        "*.png",
+        ".crawler-overrides.json",
+        "CHANGELOG.md",
+        "LICENSE*",
+        "README.md",
+        "package.json",
+        "third-party-notices.txt"
+    ],
+    "workspaces": [
+        "cdt-gdb-adapter"
+    ],
+    "vsce": {
+        "dependencies": false
+    },
     "contributes": {
         "taskDefinitions": [
             {
@@ -138,12 +155,18 @@
                                 "default": "${workspaceFolder}/a.out"
                             },
                             "args": {
-                                "type": ["string", "array"], 
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
                             "miDebuggerArgs": {
-                                "type": ["string", "array"],
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
@@ -164,6 +187,30 @@
                                     "type": "string"
                                 },
                                 "default": []
+                            },
+                            "setupCommands": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": {
+                                            "type": "string",
+                                            "description": "The debugger command to execute."
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "Optional description for the command."
+                                        },
+                                        "ignoreFailures": {
+                                            "type": "boolean",
+                                            "description": "If true, failures from the command should be ignored."
+                                        }
+                                    },
+                                    "required": [
+                                        "text"
+                                    ]
+                                },
+                                "description": "List of GDB command objects"
                             },
                             "stopAtEntry": {
                                 "type": "boolean",
@@ -266,12 +313,18 @@
                                 ]
                             },
                             "args": {
-                                "type": ["string", "array"],
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
                             "miDebuggerArgs": {
-                                "type": ["string", "array"],
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
@@ -292,6 +345,30 @@
                                     "type": "string"
                                 },
                                 "default": []
+                            },
+                            "setupCommands": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": {
+                                            "type": "string",
+                                            "description": "The debugger command to execute."
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "Optional description for the command."
+                                        },
+                                        "ignoreFailures": {
+                                            "type": "boolean",
+                                            "description": "If true, failures from the command should be ignored."
+                                        }
+                                    },
+                                    "required": [
+                                        "text"
+                                    ]
+                                },
+                                "description": "List of GDB command objects"
                             },
                             "breakOnLaunch": {
                                 "type": "boolean",
@@ -410,12 +487,18 @@
                                 "default": "${workspaceFolder}/a.out"
                             },
                             "args": {
-                                "type": ["string", "array"],
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
                             "miDebuggerArgs": {
-                                "type": ["string", "array"],
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
@@ -436,6 +519,30 @@
                                     "type": "string"
                                 },
                                 "default": []
+                            },
+                            "setupCommands": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": {
+                                            "type": "string",
+                                            "description": "The debugger command to execute."
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "Optional description for the command."
+                                        },
+                                        "ignoreFailures": {
+                                            "type": "boolean",
+                                            "description": "If true, failures from the command should be ignored."
+                                        }
+                                    },
+                                    "required": [
+                                        "text"
+                                    ]
+                                },
+                                "description": "List of GDB command objects"
                             },
                             "stopAtEntry": {
                                 "type": "boolean",
@@ -615,12 +722,18 @@
                                 "default": "${workspaceFolder}/a.out"
                             },
                             "args": {
-                                "type": ["string", "array"],
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
                             "miDebuggerArgs": {
-                                "type": ["string", "array"],
+                                "type": [
+                                    "string",
+                                    "array"
+                                ],
                                 "description": "Command-line arguments to pass to the debuggee.",
                                 "default": ""
                             },
@@ -641,6 +754,30 @@
                                     "type": "string"
                                 },
                                 "default": []
+                            },
+                            "setupCommands": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "text": {
+                                            "type": "string",
+                                            "description": "The debugger command to execute."
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "Optional description for the command."
+                                        },
+                                        "ignoreFailures": {
+                                            "type": "boolean",
+                                            "description": "If true, failures from the command should be ignored."
+                                        }
+                                    },
+                                    "required": [
+                                        "text"
+                                    ]
+                                },
+                                "description": "List of GDB command objects"
                             },
                             "stopAtEntry": {
                                 "type": "boolean",
@@ -795,77 +932,88 @@
         ]
     },
     "scripts": {
+        "node": "node -r ./register-ts-node.js",
         "clean": "gulp clean",
-        "prepare": "./prepare.js",
-        "compile": "npm run prepare && gulp compile",
-        "lint": "eslint src --ext ts",
-        "pretest": "gulp compile:tests && npm run lint",
-        "test": "mocha --timeout 10000 out/testWebpacks/*.test.js",
         "clean:tests": "gulp clean:tests",
-        "watch": "webpack -c webpack.dev.js --watch --no-color",
-        "webpack:prod": "webpack -c webpack.prod.js",
-        "package": "npm run lint && npm run prepare && gulp package",
+        "prepare": "npm --workspaces --if-present run build && npm run update-notices",
+        "lint": "eslint .",
         "tsc": "npm run prepare && tsc -p ./",
-        "pretest:no-webpack": "npm run tsc && npm run lint && gulp compile:test-programs",
-        "test:no-webpack": "mocha --timeout 10000 out/test/*.test.js",
-        "webpack:dbg-adapter": "gulp webback:gdb-adapter",
-        "webpack:unit-test": "gulp webpack:unit-test"
+        "pretest": "npm run webpack:dev && gulp compile:tests",
+        "test": "jest",
+        "webpack": "npm run prepare && npm run node -- node_modules/.bin/webpack -c",
+        "webpack:dev": "npm run webpack -- ./webpack.dev.mts",
+        "webpack:prod": "npm run webpack -- ./webpack.prod.mts",
+        "watch": "npm run webpack:dev -- --watch --no-color",
+        "package": "npm run lint && npm run prepare && gulp package",
+        "update-notices": "ts-node updateThirdPartyNotices.ts ."
     },
     "devDependencies": {
-        "@types/chai": "^4.3.0",
-        "@types/del": "^4.0.0",
-        "@types/fs-extra": "^9.0.13",
-        "@types/glob": "^7.2.0",
-        "@types/gulp": "^4.0.8",
-        "@types/mocha": "^9.1.0",
-        "@types/node": "^17.0.23",
-        "@types/semver": "^7.3.9",
-        "@types/uuid": "^8.3.4",
-        "@types/vscode": "^1.54.0",
-        "@types/which": "^2.0.1",
-        "@typescript-eslint/eslint-plugin": "^2.30.0",
-        "@typescript-eslint/parser": "^2.30.0",
-        "@vscode/debugadapter-testsupport": "^1.59.0",
-        "@vscode/test-electron": "^2.3.0",
+        "@jest/globals": "^29.7.0",
+        "@tsconfig/node20": "^20.1.4",
+        "@types/chai": "^4.3.16",
+        "@types/fs-extra": "^11.0.4",
+        "@types/gulp": "^4.0.17",
+        "@types/jest": "^29.5.12",
+        "@types/license-checker": "25.0.1",
+        "@types/mocha": "^10.0.7",
+        "@types/node": "^20.14.11",
+        "@types/semver": "^7.5.8",
+        "@types/undertaker": "^1.2.11",
+        "@types/uuid": "^10.0.0",
+        "@types/vscode": "^1.91.0",
+        "@types/webpack": "^5.28.5",
+        "@types/which": "^3.0.4",
+        "@types/yargs": "^17.0.32",
+        "@typescript-eslint/eslint-plugin": "^7.17.0",
+        "@typescript-eslint/parser": "^7.17.0",
+        "@vscode/debugadapter-testsupport": "^1.66.0",
+        "@vscode/test-electron": "^2.4.1",
+        "@vscode/vsce": "^2.31.1",
         "await-spawn": "^4.0.2",
-        "chai": "^4.3.6",
-        "del": "^6.0.0",
-        "eslint": "^6.8.0",
-        "eslint-config-airbnb-typescript": "^7.2.1",
-        "eslint-config-prettier": "^6.15.0",
+        "chai": "^5.1.1",
+        "del": "^7.1.0",
+        "eslint": "^8.57.0",
+        "eslint-config-prettier": "^9.1.0",
         "eslint-plugin-eslint-comments": "^3.2.0",
-        "eslint-plugin-import": "^2.22.1",
-        "eslint-plugin-jsx-a11y": "^6.4.1",
-        "eslint-plugin-prettier": "^3.3.1",
-        "eslint-plugin-promise": "^4.3.1",
-        "eslint-plugin-react": "^7.23.0",
-        "eslint-plugin-unicorn": "^20.1.0",
-        "gulp": "^4.0.2",
-        "gulp-chmod": "^3.0.0",
-        "gulp-shell": "^0.8.0",
-        "gulp-sourcemaps": "^3.0.0",
-        "gulp-typescript": "^6.0.0-alpha.1",
-        "mocha": "^9.2.2",
-        "node-gyp": "^9.0.0",
+        "eslint-plugin-import": "^2.29.1",
+        "eslint-plugin-jsx-a11y": "^6.9.0",
+        "eslint-plugin-prettier": "^5.2.1",
+        "eslint-plugin-promise": "^6.6.0",
+        "eslint-plugin-react": "^7.35.0",
+        "eslint-plugin-unicorn": "^54.0.0",
+        "glob": "11.0.0",
+        "gulp": "^5.0.0",
+        "gulp-chmod": "^4.0.0",
+        "gulp-execa": "^7.0.1",
+        "gulp-sourcemaps": "^2.6.5",
+        "gulp-typescript": "^5.0.1",
+        "jest": "^29.7.0",
+        "jest-extended": "^4.0.2",
+        "license-checker": "25.0.1",
+        "mocha": "^10.7.0",
+        "node-fetch": "^3.3.2",
+        "node-gyp": "^10.2.0",
         "node-loader": "^2.0.0",
-        "prettier": "^2.2.1",
-        "semver": "^7.3.5",
-        "through2": "^4.0.2",
-        "ts-loader": "^9.2.8",
-        "typescript": "^4.6.2",
-        "vsce": "^1.87.0",
-        "webpack": "^5.70.0",
-        "webpack-cli": "^4.9.2",
-        "yargs": "^17.4.0",
-        "yarn": "^1.22.19"
+        "prettier": "^3.3.3",
+        "semver": "^7.5.4",
+        "source-map-loader": "^5.0.0",
+        "ts-jest": "^29.2.3",
+        "ts-loader": "^9.5.1",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.5.3",
+        "webpack": "^5.93.0",
+        "webpack-cli": "^5.1.4",
+        "webpack-merge": "^6.0.1",
+        "yargs": "^17.7.2",
+        "yarn": "^1.22.22"
     },
     "dependencies": {
-        "@vscode/debugadapter": "^1.59.0",
-        "@vscode/debugprotocol": "^1.59.0",
-        "axios": "^1.4.0",
-        "cdt-gdb-adapter": "^0.0.19",
-        "fs-extra": "^10.0.1",
-        "uuid": "^8.3.2",
-        "which": "^2.0.2"
+        "@vscode/debugadapter": "^1.66.0",
+        "@vscode/debugprotocol": "^1.66.0",
+        "axios": "^1.7.2",
+        "cdt-gdb-adapter": "0.0.19",
+        "fs-extra": "^11.0.4",
+        "uuid": "^10.0.0",
+        "which": "^3.0.1"
     }
 }

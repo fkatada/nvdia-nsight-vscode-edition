@@ -96,18 +96,21 @@ class CudaDebugAdapterTracker implements vscode.DebugAdapterTracker {
 
             switch (messageName) {
                 case 'initialized':
-                case 'continue':
+                case 'continue': {
                     this.debugController.updateDebuggerMode(DebuggerMode.running);
                     break;
+                }
 
-                case 'stopped':
+                case 'stopped': {
                     this.debugController.updateDebuggerMode(DebuggerMode.stopped);
                     break;
+                }
 
                 case 'exited':
-                case 'terminated':
+                case 'terminated': {
                     this.debugController.updateDebuggerMode(DebuggerMode.design);
                     break;
+                }
 
                 case CudaDebugProtocol.Event.changedCudaFocus: {
                     const typedEvent = eventMessage as CudaDebugProtocol.ChangedCudaFocusEvent;
@@ -121,8 +124,9 @@ class CudaDebugAdapterTracker implements vscode.DebugAdapterTracker {
                     break;
                 }
 
-                default:
+                default: {
                     break;
+                }
             }
         }
     }
@@ -218,21 +222,19 @@ class CudaDebugController implements vscode.Disposable, vscode.DebugAdapterTrack
 
 export function activateDebugController(context: vscode.ExtensionContext, telemetry: TelemetryService): void {
     const cudaGdbFactory: vscode.DebugAdapterDescriptorFactory = new InlineDebugAdapterFactory();
-
-    context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory(cudaGdbDebugType, cudaGdbFactory));
-    context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory(cudaGdbServerType, cudaGdbFactory));
-    context.subscriptions.push(vscode.debug.registerDebugAdapterDescriptorFactory(cudaQnxGdbServerType, cudaGdbFactory));
-
     const debugController: CudaDebugController = new CudaDebugController(context, telemetry);
-    context.subscriptions.push(debugController);
 
-    context.subscriptions.push(vscode.debug.registerDebugAdapterTrackerFactory(cudaGdbDebugType, debugController));
-    context.subscriptions.push(vscode.debug.registerDebugAdapterTrackerFactory(cudaGdbServerType, debugController));
-    context.subscriptions.push(vscode.debug.registerDebugAdapterTrackerFactory(cudaQnxGdbServerType, debugController));
-
-    // eslint-disable-next-line no-return-await
-    context.subscriptions.push(vscode.commands.registerCommand(cudaChangeDebugFocus, async () => await debugController.changeDebugFocus()));
-    context.subscriptions.push(vscode.commands.registerCommand(cudaPickProcess, async () => pickProcess()));
+    context.subscriptions.push(
+        vscode.debug.registerDebugAdapterDescriptorFactory(cudaGdbDebugType, cudaGdbFactory),
+        vscode.debug.registerDebugAdapterDescriptorFactory(cudaGdbServerType, cudaGdbFactory),
+        vscode.debug.registerDebugAdapterDescriptorFactory(cudaQnxGdbServerType, cudaGdbFactory),
+        debugController,
+        vscode.debug.registerDebugAdapterTrackerFactory(cudaGdbDebugType, debugController),
+        vscode.debug.registerDebugAdapterTrackerFactory(cudaGdbServerType, debugController),
+        vscode.debug.registerDebugAdapterTrackerFactory(cudaQnxGdbServerType, debugController),
+        vscode.commands.registerCommand(cudaChangeDebugFocus, async () => await debugController.changeDebugFocus()),
+        vscode.commands.registerCommand(cudaPickProcess, async () => pickProcess())
+    );
 }
 
 /* eslint-enable @typescript-eslint/no-unused-vars */

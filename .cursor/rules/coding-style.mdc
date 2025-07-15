@@ -1,0 +1,66 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Variable naming
+
+Use `ok` for local boolean variables that are used solely for error checking. Reuse this variable across multiple calls unless you actually need to run things and capture errors in parallel.
+
+# Prefer declarative over imperative code
+
+Avoid constructing objects and collections step by step using explicit loops etc. Use declarative techniques instead.
+
+# Prefer runtime-checked correctness constructs over compile-time-only
+
+Use `#` for private members for runtime checking and proper namespacing of private properties in class hierarchies. Avoid TypeScript's compile-time-only `private`. 
+
+# Use array and object destructuring for conciseness
+
+For example, instead of:
+```
+const a = foo.a;
+const b = foo.b;
+```
+consider writing:
+```
+const {a, b} = foo;
+```
+
+# Use implicit property names when variable name matches the property
+
+For example, instead of:
+```
+const bar = {a: a, b: foo.b}
+```
+consider writing:
+```
+const var = {a, foo.b}
+```
+
+# Refactor non-trivial computations into local functions
+
+If some value must be computed in a non-trivial way in the middle of a function - e.g. involving a complex loop with lots of additional local variables that are used only by this loop - and this computation is otherwise isolated from the rest of the function except for captured immutable variables, consider refactoring the computation into a local function and then calling it to obtain the value. For example, instead of:
+```
+let foo = [];
+while (something) {
+    // ... lots of other code ...
+    foo.push(value);
+    // ... lots of other code ...
+}
+// use foo
+console.log(foo)
+```
+consider doing:
+```
+const computeFoo = () => {
+    let foo = [];
+    while (something) {
+        // ... lots of other code ...
+        foo.push(value);
+        // ... lots of other code ...
+    }
+};
+const foo = computeFoo();
+```
+Note that this example is only applicable to imperative code that cannot be more succintly and clearly rewritten in a declarative fashion! In general, you should still prefer to build up collections and objects in a purely declarative way, without loops or assignments, where it doesn't hamper readability.

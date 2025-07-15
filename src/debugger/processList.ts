@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
-import * as util from 'util';
+import { promisify } from 'node:util';
+import * as childProcess from 'node:child_process';
 
-const exec = util.promisify(require('child_process').exec);
+const exec = promisify(childProcess.exec);
 
 interface ProcessItem extends vscode.QuickPickItem {
     pid: number;
@@ -44,14 +45,18 @@ export async function getAttachItems(): Promise<ProcessItem[]> {
     // root        1710 00:00:50 /usr/lib/xorg/Xorg -core :0 -seat seat0 -auth /var/run
     // root        1713 00:00:00 /sbin/agetty -o -p -- \u --noclear tty1 linux
 
-    const { error, stdout, stderr } = await exec('ps -af -o uname,pid,time,cmd');
-    const options = stdout;
-
-    if (error || stderr) {
-        throw new Error('Unable to select process to attach to');
+    let stdout: string, stderr: string;
+    try {
+        ({ stdout, stderr } = await exec('ps -af -o uname,pid,time,cmd'));
+        if (stderr) {
+            throw new Error(stderr);
+        }
+    } catch (error) {
+        const message = error instanceof Error ? error.message : `${error}`;
+        throw new Error(`Unable to retrieve process list:\n${message}`);
     }
 
-    const output = options.split('\n');
+    const output = stdout.split('\n');
 
     // figure out the index where PID ends because all PIDs would end at that index
     const pidEndIdx = output[0].indexOf('PID') + 3;
@@ -70,7 +75,7 @@ export async function getAttachItems(): Promise<ProcessItem[]> {
 
     const username = output.map((x: string) => x.slice(0, x.indexOf(' ')).trimStart()).slice(1);
 
-    const items: ProcessItem[] = pidArray.map((item: number, index: string) => ({ pid: pidArray[index], label: `${username[index]} : ${cmdArray[index]}` }));
+    const items: ProcessItem[] = pidArray.map((item, index) => ({ pid: pidArray[index], label: `${username[index]} : ${cmdArray[index]}` }));
     items.sort((a, b) => 0 - (a.label > b.label ? -1 : 1));
 
     const quickPickList: ProcessItem[] = items.filter((item: ProcessItem) => item.label.trim() !== ':');

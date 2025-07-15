@@ -272,15 +272,14 @@ export class TelemetryService {
     }
 
     trackCommand(name: string): CommandTracker {
-        // eslint-disable-next-line @typescript-eslint/no-this-alias, no-underscore-dangle
-        const _this = this;
-
         type CommandTrackerStatus = 'initiated' | 'canceled' | 'completed';
 
         let status: CommandTrackerStatus = 'initiated';
         let reason: string | undefined;
 
-        const tracker: CommandTracker = {
+        const tracker = {
+            service: this,
+
             cancel(cancelReason: string): void {
                 status = 'canceled';
                 reason = cancelReason;
@@ -291,7 +290,7 @@ export class TelemetryService {
             },
 
             dispose(): void {
-                _this.client.sendEvent<ExecCommandEvent>({
+                this.service.client.sendEvent<ExecCommandEvent>({
                     name: 'exec_command',
                     params: {
                         name,

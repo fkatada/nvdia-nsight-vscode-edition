@@ -13,7 +13,7 @@ import { expect } from 'chai';
 import { TestUtils } from './testUtils';
 import { CudaDebugClient } from './cudaDebugClient';
 
-describe('Breakpoint tests', async () => {
+describe('Breakpoint tests', () => {
     let dc: CudaDebugClient;
 
     beforeEach(async () => {
@@ -42,7 +42,7 @@ describe('Breakpoint tests', async () => {
     });
 
     it('Breakpoints on kernel functions work', async () => {
-        TestUtils.ensure(dc.capabilities.supportsFunctionBreakpoints);
+        expect(dc.capabilities.supportsFunctionBreakpoints).eq(true);
 
         const bpResp = await dc.setFunctionBreakpointsRequest({
             breakpoints: [
@@ -86,7 +86,7 @@ describe('Breakpoint tests', async () => {
             // eslint-disable-next-line no-await-in-loop
             await dc.nextRequest({ threadId });
             // eslint-disable-next-line no-await-in-loop
-            threadId = (await TestUtils.assertStoppedLocation(dc, 'step', 'variables/variables.cu', expectedLineNumbers[i])).threadId;
+            ({ threadId } = await TestUtils.assertStoppedLocation(dc, 'step', 'variables/variables.cu', expectedLineNumbers[i]));
         }
     });
 

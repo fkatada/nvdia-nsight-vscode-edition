@@ -1,7 +1,6 @@
 {
     "version": "0.2.0",
     "configurations": [
-
         {
             "name": "Extension",
             "type": "extensionHost",
@@ -17,15 +16,16 @@
         },
         {
             "name": "Tests",
-            "type": "pwa-node",
+            "type": "node",
             "request": "launch",
             "runtimeExecutable": "npm",
             "args": [
                 "run",
-                "test"
-            ],
-            "outFiles": [
-                "${workspaceFolder}/out/testWebpacks/**/*.js"
+                "test",
+                "--",
+                "-i",
+                "-t",
+                "${input:testsPattern}",
             ],
             "console": "integratedTerminal"
         },
@@ -50,6 +50,11 @@
             "id": "gulpArgs",
             "type": "promptString",
             "description": "Build task and optionally its command-line arguments"
-        }
+        },
+        {
+            "id": "testsPattern",
+            "type": "promptString",
+            "description": "Title of the test case or test suite to run. Leave blank to run all tests.",
+        },
     ]
 }

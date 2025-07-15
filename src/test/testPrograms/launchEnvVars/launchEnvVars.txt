@@ -5,4 +5,4 @@ MISFORMED_LINE
 # A comment (should be ignored)
 =X
 =
-unset        HOME  
+unset        PRE_EXISTING_ENV_VAR  

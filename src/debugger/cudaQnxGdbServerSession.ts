@@ -12,11 +12,10 @@
 /* eslint-disable max-classes-per-file */
 import { DebugProtocol } from '@vscode/debugprotocol';
 import { GDBBackend, GDBTargetDebugSession } from 'cdt-gdb-adapter';
-import { resolve, isAbsolute } from 'path';
-import { ChildProcess } from 'child_process';
-import { EventEmitter } from 'events';
+import { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { logger, OutputEvent, TerminatedEvent } from '@vscode/debugadapter';
-import { CudaGdbSession, checkCudaGdb, CudaGdbBackend } from './cudaGdbSession';
+import { CudaGdbSession, CudaGdbBackend } from './cudaGdbSession';
 import { CudaTargetLaunchRequestArguments, CudaTargetAttachRequestArguments } from './cudaGdbServerSession';
 
 class CudaQNXGdbServerBackend extends CudaGdbBackend {
@@ -37,7 +36,7 @@ export class CudaQnxGdbServerSession extends CudaGdbSession {
     }
 
     protected createBackend(): GDBBackend {
-        const backend: CudaGdbBackend = new CudaQNXGdbServerBackend();
+        const backend: CudaGdbBackend = new CudaQNXGdbServerBackend(this);
         const emitter: EventEmitter = backend as EventEmitter;
 
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -64,61 +63,35 @@ export class CudaQnxGdbServerSession extends CudaGdbSession {
      */
 
     protected async launchRequest(response: DebugProtocol.LaunchResponse, args: CudaTargetLaunchRequestArguments): Promise<void> {
-        let logFilePath = args.logFile;
-        if (logFilePath && !isAbsolute(logFilePath)) {
-            logFilePath = resolve(logFilePath);
-        }
-        // Logger setup is handled in the base class
-        logger.init((outputEvent: OutputEvent) => this.sendEvent(outputEvent), logFilePath, true);
+        logger.verbose('Executing launch request');
 
-        if (process.platform !== 'linux') {
-            response.success = false;
-            response.message = 'Unable to launch cuda-gdb on non-Linux system';
-            this.sendErrorResponse(response, 1, response.message);
-            await super.launchRequest(response, args);
+        this.initializeLogger(args);
 
+        let ok = await this.validateLinuxPlatform(response);
+        if (!ok) {
+            // Error response sent within validateLinuxPlatform
             return;
         }
 
         const cdtLaunchArgs: CudaTargetAttachRequestArguments = { ...args };
 
-        cdtLaunchArgs.gdb = args.debuggerPath;
+        // Assume true for isQNX in the QNX server session
+        const isQNX = true;
 
-        try {
-            CudaGdbSession.configureLaunch(args, cdtLaunchArgs);
-        } catch (error: any) {
-            response.success = false;
-            response.message = error.message;
-            logger.verbose(`Failed in configureLaunch() with error ${response.message}`);
-            this.sendErrorResponse(response, 1, response.message);
-            await super.launchRequest(response, args);
-
+        ok = await this.runConfigureLaunch(response, args, cdtLaunchArgs, 'LaunchRequest');
+        if (!ok) {
+            // Error response sent within runConfigureLaunch
             return;
         }
 
-        if (args.args === undefined) {
-            cdtLaunchArgs.arguments = args.args;
-        }
-
-        const cudaGdbPath = await checkCudaGdb(cdtLaunchArgs.gdb, true);
-
-        if (cudaGdbPath.kind === 'doesNotExist') {
-            response.success = false;
-            response.message = `Unable to find cuda-gdb in ${cdtLaunchArgs.gdb}`;
-            logger.verbose(`Failed with error ${response.message}`);
-            this.sendErrorResponse(response, 1, response.message);
-
+        // This also sets the path if found
+        ok = await this.validateAndSetCudaGdbPath(response, cdtLaunchArgs, isQNX);
+        if (!ok) {
+            // Error response sent within validateAndSetCudaGdbPath
             return;
         }
 
-        logger.verbose('cuda-gdb found and accessible');
-
-        cdtLaunchArgs.gdb = cudaGdbPath.path;
-
-        if (args.stopAtEntry) {
-            this.stopAtEntry = true;
-        }
-
+        logger.verbose('Calling launch request in super class');
         await (this.gdbTargetDebugSession as any).launchRequest.call(this, response, cdtLaunchArgs);
     }
 

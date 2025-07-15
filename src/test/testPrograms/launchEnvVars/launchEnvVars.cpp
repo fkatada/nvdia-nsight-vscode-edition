@@ -1,8 +1,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
-#include <fstream>
 #include <vector>
+
 
 int main()
 {
@@ -10,7 +10,7 @@ int main()
         {"ENV_VAR1", "Value1"},
         {"ENV_VAR2", "Value2"},
         {"ENV_VAR3", ""},
-        {"HOME", nullptr}
+        {"PRE_EXISTING_ENV_VAR", nullptr}
     };
 
     bool success = true;

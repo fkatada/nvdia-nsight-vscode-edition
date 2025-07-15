@@ -1,11 +1,22 @@
 # Nsight Visual Studio Code Edition Changelog
 
+
+## Version 2025.1
+
+* **General Enhancements**
+    * Arguments to debuggeed process (`args` in launch.json) can now be an array of strings rather than a single string.
+
+    * CPU threads, stack frames, and variables can be fully inspected while stopped in GPU code, and vice versa.
+
+* **CUDA Debugger**
+    * See cuda-gdb release notes in the NVIDIA CUDA Toolkit 12.6 Update 2.
+
 ## Version 2024.1
 
 * **General Enhancements**
     * Added ability to pass custom arguments in debugger using miDebuggerArgs.
 
-    * Added ability to specify path to debugger usingmiDebuggerPath in addition to previously available debuggerPath.
+    * Added ability to specify path to debugger using miDebuggerPath in addition to previously available debuggerPath.
 
     * Line cursor now changes accordingly when switching focus between blocks/threads via the Debug console.
 

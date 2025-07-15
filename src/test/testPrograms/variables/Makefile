@@ -15,7 +15,7 @@ all: build
 build: variables
 
 variables: variables.cu
-	nvcc -g -G -o $@ $+
+	nvcc -arch=sm_75 -g -G -o $@ $+
 
 clean:
 	rm -f variables

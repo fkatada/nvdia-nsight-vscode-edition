@@ -10,7 +10,7 @@
 \* ---------------------------------------------------------------------------------- */
 
 import * as fse from 'fs-extra';
-import * as path from 'path';
+import path from 'node:path';
 import * as vscode from 'vscode';
 
 import { activateDebugController } from './debugController';

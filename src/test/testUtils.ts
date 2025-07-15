@@ -9,18 +9,17 @@
 |                                                                                      |
 \* ---------------------------------------------------------------------------------- */
 
-import * as path from 'path';
-import * as fs from 'fs';
+import assert from 'node:assert/strict';
+import { type SpawnOptions } from 'node:child_process';
+import * as fs from 'node:fs';
+import path from 'node:path';
 import { DebugProtocol } from '@vscode/debugprotocol';
-import { expect } from 'chai';
 import { DebugClient } from '@vscode/debugadapter-testsupport';
-import { CudaDebugClient } from './cudaDebugClient';
-import { CudaLaunchRequestArguments } from '../debugger/cudaGdbSession';
+import { CudaDebugClient, type StopLocationInfo } from './cudaDebugClient';
+import { type CudaLaunchRequestArguments } from '../debugger/cudaGdbSession';
+import { expect } from '@jest/globals';
 
-export interface StopLocationInfo {
-    threadId: number;
-    frameId: number;
-}
+export { StopLocationInfo } from './cudaDebugClient';
 
 export interface StoppedContext {
     threadId: number;
@@ -28,28 +27,18 @@ export interface StoppedContext {
     actLocals: Map<string, DebugProtocol.Variable>;
 }
 
+export interface LineNumbers {
+    [marker: string]: number;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-extraneous-class
 export class TestUtils {
-    private static readonly debuggerScriptsDirName = 'debugger';
-
-    private static readonly cudaGdbAdapterScriptName = 'cudaGdbAdapter.js';
-
-    private static readonly cudaGdbAdapterWebpackName = 'cudaGdbAdapter.webpack.js';
-
     static readonly localScopeName = 'Local';
 
-    private static getDebuggerScriptsDir(): string {
-        return path.resolve(__dirname, '..', this.debuggerScriptsDirName);
-    }
-
     static getDebugAdapterPath(): string {
-        let debugAdapterPath = path.resolve(this.getDebuggerScriptsDir(), this.cudaGdbAdapterScriptName);
-
-        if (fs.existsSync(debugAdapterPath)) {
-            return debugAdapterPath;
-        }
-
-        debugAdapterPath = path.resolve(__dirname, this.cudaGdbAdapterWebpackName);
-        expect(fs.existsSync(debugAdapterPath)).eq(true);
+        // eslint-disable-next-line unicorn/prefer-module
+        const debugAdapterPath = path.resolve(__dirname, '../../dist/debugAdapter.js');
+        expect(fs.existsSync(debugAdapterPath)).toBe(true);
         return debugAdapterPath;
     }
 
@@ -61,9 +50,9 @@ export class TestUtils {
             searchPaths.push(testProgDirEnvVar);
         }
 
-        // eslint-disable-next-line unicorn/no-for-loop
-        for (let i = 0; i < searchPaths.length; i += 1) {
-            const testProgramsDir = path.resolve(__dirname, searchPaths[i]);
+        for (const searchPath of searchPaths) {
+            // eslint-disable-next-line unicorn/prefer-module
+            const testProgramsDir = path.resolve(__dirname, searchPath);
             const resolvedTestPath = path.resolve(testProgramsDir, testPath);
 
             if (fs.existsSync(resolvedTestPath)) {
@@ -78,6 +67,25 @@ export class TestUtils {
         return this.resolveTestPath(programName);
     }
 
+    /** For each lineNumber in programName that has a comment of the form
+     *
+     *  /*@someMarker*
+     *
+     * the returned object will contain {"someMarker": lineNumber}.
+     */
+    static getLineNumbersFromComments(fileName: string): LineNumbers {
+        const filePath = this.resolveTestPath(fileName);
+        const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+        const lineNumbers: LineNumbers = {};
+        for (const [i, line] of lines.entries()) {
+            const { marker } = /\/\*@(?<marker>.+?)\*/.exec(line)?.groups ?? {};
+            if (marker !== undefined) {
+                lineNumbers[marker] = i + 1;
+            }
+        }
+        return lineNumbers;
+    }
+
     static getTestSource(fileName: string): DebugProtocol.Source {
         return {
             name: fileName,
@@ -85,28 +93,18 @@ export class TestUtils {
         };
     }
 
-    static ensure(capability: boolean | undefined): void {
-        expect(capability).eq(true);
-    }
-
-    static async createDebugClient(): Promise<CudaDebugClient> {
+    static async createDebugClient(spawnOptions?: SpawnOptions): Promise<CudaDebugClient> {
         const debugAdapterPath = TestUtils.getDebugAdapterPath();
 
-        const dc = new CudaDebugClient(debugAdapterPath);
+        const dc = new CudaDebugClient(debugAdapterPath, spawnOptions);
 
         await dc.start();
         const initResp = await dc.initializeRequest();
 
-        expect(initResp.success).eq(true);
+        expect(initResp.success).toBe(true);
+        assert(initResp.body);
 
-        // Disable the eslint rule as it contradicts the recommended usage of exist.
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-        expect(initResp.body).exist;
-
-        // Disable the eslint rule per the assertion in the previous statement.
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        dc.capabilities = initResp.body!;
-
+        dc.capabilities = initResp.body;
         return dc;
     }
 
@@ -132,24 +130,8 @@ export class TestUtils {
         return dc;
     }
 
-    static async assertStoppedLocation(dc: DebugClient, stoppedReason: string, file: string, line: number, timeout?: number): Promise<StopLocationInfo> {
-        // The following code has been borrowed from debugClient.ts (with modifications)
-        const stoppedEvent = await dc.waitForEvent('stopped', timeout ?? 10000);
-        expect(stoppedEvent.body.reason).eq(stoppedReason);
-
-        const { threadId } = stoppedEvent.body;
-
-        const stackTraceResp = await dc.stackTraceRequest({
-            threadId
-        });
-
-        expect(stackTraceResp.body.stackFrames.length).gt(0);
-
-        const topStackFrame = stackTraceResp.body.stackFrames[0];
-        expect(topStackFrame.line).eq(line);
-        expect(topStackFrame.source?.path?.endsWith(file)).eq(true);
-
-        return { threadId, frameId: topStackFrame.id };
+    static async assertStoppedLocation(dc: CudaDebugClient, reason: string, file: string, line: number, timeout?: number): Promise<StopLocationInfo> {
+        return dc.expectToStopAt(reason, file, line, timeout, async () => {});
     }
 
     static async getLocals(dc: DebugClient, frameId: number): Promise<Map<string, DebugProtocol.Variable>> {
@@ -158,14 +140,18 @@ export class TestUtils {
         return locals;
     }
 
+    static async getLocalsAsObject(dc: DebugClient, frameId: number): Promise<{ [name: string]: DebugProtocol.Variable }> {
+        const localsScopeReference = await this.getLocalsScopeReference(dc, frameId);
+        const locals = await this.getChildrenAsObject(dc, localsScopeReference);
+        return locals;
+    }
+
     static async getLocalsScopeReference(dc: DebugClient, frameId: number): Promise<number> {
         const scopesResp = await dc.scopesRequest({ frameId });
         const { scopes } = scopesResp.body;
 
-        const localScope = scopes.filter((s) => s.name === TestUtils.localScopeName)[0];
-
-        // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-        expect(localScope).exist;
+        const localScope = scopes.find((s) => s.name === TestUtils.localScopeName);
+        assert(localScope);
 
         return localScope.variablesReference;
     }
@@ -177,15 +163,26 @@ export class TestUtils {
             variablesReference
         });
 
-        variablesResp.body.variables.forEach((v) => vars.set(v.name, v));
+        for (const v of variablesResp.body.variables) {
+            vars.set(v.name, v);
+        }
 
         return vars;
     }
 
-    static readonly defaultVerifyLocalsTimeout = 120000;
+    static async getChildrenAsObject(dc: DebugClient, variablesReference: number): Promise<{ [name: string]: DebugProtocol.Variable }> {
+        const vars: { [name: string]: DebugProtocol.Variable } = {};
+        const variablesResp = await dc.variablesRequest({ variablesReference });
+        for (const v of variablesResp.body.variables) {
+            vars[v.name] = v;
+        }
+        return vars;
+    }
+
+    static readonly defaultVerifyLocalsTimeout = 120_000;
 
     static async verifyLocalsOnStop(
-        dc: DebugClient,
+        dc: CudaDebugClient,
         source: string,
         line: number,
         stopReason: string,
@@ -201,18 +198,17 @@ export class TestUtils {
         const actual = await TestUtils.getLocals(dc, frameId);
 
         if (allowOthers === false) {
-            expect(actual.size).eq(expLocals.length);
+            expect(actual.size).toEqual(expLocals.length);
         }
 
-        expLocals.forEach((v) => {
+        for (const v of expLocals) {
             const local = actual.get(v.name);
-            // eslint-disable-next-line @typescript-eslint/no-unused-expressions
-            expect(local).exist;
+            assert(local);
+
             if (v.value) {
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                expect(local!.value).eq(v.value);
+                expect(local.value).toEqual(v.value);
             }
-        });
+        }
 
         return { threadId, frameId, actLocals: actual };
     }

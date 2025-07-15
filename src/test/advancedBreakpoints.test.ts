@@ -13,7 +13,7 @@ import { expect } from 'chai';
 import { TestUtils } from './testUtils';
 import { CudaDebugClient } from './cudaDebugClient';
 
-describe('Advanced Breakpoint tests', async () => {
+describe('Advanced Breakpoint tests', () => {
     let dc: CudaDebugClient;
 
     afterEach(async () => {
